@@ -48,7 +48,8 @@ def test_build_index_grup_boyutlari_dogru(lib, real_config, tmp_path):
     rep = tmp_path / "data" / "test1_PEPTIDE_A0201_pandora" / "rep1"
     out = rep / "analysis"
     out.mkdir()
-    run_bash(PRE.format(lib=lib, cfg=real_config) + f'mdkit_build_index "{rep}" "{out}"')
+    r = run_bash(PRE.format(lib=lib, cfg=real_config) + f'mdkit_build_index "{rep}" "{out}"')
+    assert r.returncode == 0, r.stderr
 
     counts, cur = {}, None
     for line in (out / "index.ndx").read_text().splitlines():
@@ -79,6 +80,12 @@ def test_build_index_bos_zincirde_hata_verir(lib, real_config, tmp_path):
     r = run_bash(PRE.format(lib=lib, cfg=cfg) + f'mdkit_build_index "{rep}" "{out}"')
     assert r.returncode != 0
     assert not (out / "index.ndx").exists()
+    assert "mdkit:" in r.stderr, r.stderr
+    # gmx make_ndx silently skips creating a group for a chain letter that
+    # matches 0 atoms ("Group is empty"), so LIGAND (and LIGAND_BB, which
+    # depends on it) never gets created at all -- this is caught by the
+    # canonical-name presence loop, not the later size check.
+    assert "index grubu eksik: LIGAND" in r.stderr, r.stderr
 
 
 @needs_gmx
@@ -92,3 +99,4 @@ def test_build_index_bozuk_referansta_hata_verir(lib, real_config, tmp_path):
         PRE.format(lib=lib, cfg=real_config) + f'mdkit_build_index "{rep}" "{out}"'
     )
     assert r.returncode != 0
+    assert "mdkit:" in r.stderr, r.stderr

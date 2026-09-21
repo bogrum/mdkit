@@ -76,11 +76,11 @@ mdkit_resolve_gmx() {
 
 mdkit_make_ref() {
     # $1 = replika dizini. $TPR_NAME zincir ID'lerini tasiyan topolojidir (spec 2.2).
-    local rd="$1"
-    "$GMX" trjconv -s "$rd/$TPR_NAME" -f "$rd/$TRAJ_NAME" \
-        -o "$rd/$REF_NAME" -dump 0 >/dev/null 2>&1 <<< "Protein"
+    local rd="$1" err
+    err="$("$GMX" trjconv -s "$rd/$TPR_NAME" -f "$rd/$TRAJ_NAME" \
+        -o "$rd/$REF_NAME" -dump 0 2>&1 >/dev/null <<< "Protein")"
     if [[ ! -s "$rd/$REF_NAME" ]]; then
-        echo "mdkit: $REF_NAME uretilemedi: $rd" >&2
+        echo "mdkit: $REF_NAME uretilemedi: $rd -- $(printf '%s' "$err" | tail -3 | tr '\n' ' ')" >&2
         return 1
     fi
     return 0
@@ -100,8 +100,10 @@ mdkit_build_index() {
     # bulunamaz.)
     local rep_dir="$1" out_dir="$2"
     local ref="$rep_dir/$REF_NAME" ndx="$out_dir/index.ndx"
+    local err
 
-    "$GMX" make_ndx -f "$ref" -o "$ndx" >/dev/null 2>&1 <<EOF
+    rm -f "$ndx"
+    err="$("$GMX" make_ndx -f "$ref" -o "$ndx" 2>&1 >/dev/null <<EOF
 chain $CHAIN_RECEPTOR
 chain $CHAIN_AUX
 chain $CHAIN_LIGAND
@@ -109,9 +111,10 @@ chain $CHAIN_LIGAND
 "ch$CHAIN_LIGAND" & "Backbone"
 q
 EOF
+)"
 
     if [[ ! -s "$ndx" ]]; then
-        echo "mdkit: make_ndx basarisiz: $rep_dir" >&2
+        echo "mdkit: make_ndx basarisiz: $rep_dir -- $(printf '%s' "$err" | tail -3 | tr '\n' ' ')" >&2
         return 1
     fi
 
