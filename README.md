@@ -1,7 +1,123 @@
 # mdkit — post-MD analiz araci
 
-GROMACS trajektorileri uzerinde, kompleks x replika duzeninde tekrarlanabilir
-analiz kosar ve sonuclari tek bir birlesik tablodan cizdirir.
+GROMACS trajektorileri uzerinde, **kompleks x replika** duzeninde tekrarlanabilir
+analiz kosar; ciktilari tek bir birlesik tabloda toplar ve oradan cizdirir.
+
+Tek bir trajektoriyi elle analiz etmek icin degil, ayni analizi 105 trajektoride
+gozetimsiz kosup sonra hepsini birlikte gormek icin yazildi.
+
+---
+
+## Calisma prensibi
+
+### Boru hatti
+
+```
+config.sh ──► run_analysis.sh ──► analysis/<ad>.sh ──► rep*/analysis/*.xvg
+                  │                    (eklenti)              │
+                  │                                           ▼
+                  └──► results/run_log.csv          collect_results.py
+                                                              │
+                                                              ▼
+                                            results/{timeseries,profile}_long.csv
+                                                              │
+                                                              ▼
+                                                     plot_results.py
+                                                              │
+                                                              ▼
+                                                   results/plots/*.png
+```
+
+### Uc katman
+
+| Katman | Dosyalar | Sorumlulugu | Bilmedigi sey |
+|---|---|---|---|
+| **Yapilandirma** | `config.sh` | Projeye ozel her sey: yollar, dosya adlari, zincir harfleri, replika listesi | Analizlerin ne yaptigi |
+| **Kosum (bash)** | `run_analysis.sh`, `analysis/lib.sh`, `analysis/<ad>.sh` | Kesif, index kurulumu, gmx cagrilari, log, idempotency, hata yalitimi | Sonuclarin nasil gosterilecegi |
+| **Toplama/cizim (Python)** | `collect_results.py`, `plot_results.py` | `.xvg` ayristirma, birlesik CSV, grafik | gmx'in nasil cagrildigi |
+
+Katmanlar arasindaki tek sozlesme iki sey: **`run_analysis.sh --list`** ciktisi
+(hangi cikti hangi analize ve hangi veri sekline ait) ve **`.xvg` dosyalarinin
+kendisi**. Python tarafi gmx komutlarini hic bilmez; bash tarafi pandas'i hic
+bilmez.
+
+### Bir kosuda ne olur
+
+`./run_analysis.sh --all /veri/kok` dediginizde sirayla:
+
+1. **Config yuklenir ve dogrulanir.** Zorunlu bir degisken eksikse ADIYLA
+   bildirilir ve cikilir. (`PYTHON`'un PATH fallback'i yoktur: yanlis
+   yorumlayici sessizce secilip cizim asamasinda patlamasin diye.)
+2. **Hedefler kesfedilir.** `COMPLEX_GLOB` eslesen dizinler, her birinde `REPS`
+   alt dizinleri.
+3. **On kosullar kontrol edilir.** Her replika icin trajektori, tpr ve referans
+   PDB. Eksik olan `SKIP_MISSING` olarak loglanir; kosu durmaz.
+4. **Eksik referans PDB'ler icin TEK bir onay sorulur.** Kabul edilirse mevcut
+   kuru trajektoriden `-dump 0` ile uretilir (saniyeler), sonra analiz kaldigi
+   yerden devam eder. `-y` ile sorulmaz.
+5. **Index kurulur** (gereken analizler icin, replika basina bir kez):
+   zincir harfleri `chain A/B/C` ile secilir, Backbone kesisimleri alinir, ve
+   basliklar **kanonik adlara** cevrilir: `RECEPTOR`, `AUX`, `LIGAND`,
+   `RECEPTOR_BB`, `LIGAND_BB`. Bes adin da olustugu ve grup boyutlarinin
+   tutarli oldugu dogrulanir.
+6. **Her (replika x analiz) icin:** ciktilar zaten varsa `SKIP_DONE`; yoksa
+   eklenti **alt kabukta** kosturulur. Cikis kodu, sure ve hata mesaji
+   `run_log.csv`'ye yazilir.
+7. **Hicbir hata kosuyu durdurmaz.** Bir replikanin gmx hatasi `HATA` satiri
+   olur; sonraki replika ve sonraki kompleks normal devam eder.
+
+Sonra ayri bir adimda `collect_results.py` butun `.xvg`'leri iki uzun-format
+CSV'ye indirger, `plot_results.py` de yalnizca o CSV'leri okuyarak cizer.
+
+### Diskte ne nereye yazilir
+
+```
+$DATA_ROOT/
+├── <kompleks>/rep{1,2,3}/
+│   ├── traj_compact_center_dry.xtc     (girdi, dokunulmaz)
+│   ├── md_0_10.tpr                     (girdi, dokunulmaz)
+│   ├── check_ref.pdb                   (yoksa uretilir)
+│   ├── traj_fit_mhc.xtc                (yalnizca --groove-fit; saklanir)
+│   └── analysis/
+│       ├── index.ndx                   (bir kez kurulur)
+│       └── *.xvg                       (ham ciktilar, trajektorinin yaninda)
+└── results/
+    ├── run_log.csv
+    ├── timeseries_long.csv
+    ├── profile_long.csv
+    └── plots/
+        ├── per_complex/<kompleks>_<cikti>.png
+        ├── mean_sd/<kompleks>_<cikti>.png
+        └── compare_<cikti>.png
+```
+
+Ham `.xvg` bilerek trajektorinin yaninda durur: dizin tasinirsa sonuc da
+birlikte gider ve hangi kosudan geldigi belirsizlesmez. Birlesik CSV ise
+cizim katmaninin 105 dizini taramasini onler.
+
+### Dayandigi dort karar
+
+**1. Projeye ozel her sey tek dosyada.** `config.sh` disinda hicbir calisma
+dosyasinda mutlak yol ya da proje adi yoktur; bu bir testle zorlanir
+(`tests/test_portability.py`). Baska bir veri setiyle calistirmak kod
+degistirmeyi degil, config kopyalamayi gerektirir.
+
+**2. Gruplar isimle secilir, numarayla degil.** `make_ndx`'in urettigi
+numaralar sisteme gore kayabilir; kanonik adlar kaymaz. Ustelik gmx secimi
+`.xvg` basligina yazar — `@ subtitle "LIGAND after lsq fit to RECEPTOR_BB"` —
+yani **cikti dosyasi kendi tanimini tasir.**
+
+**3. Cizim, analizin ADINA degil verinin SEKLINE bakar.** `ANALYSIS_KIND`
+(`timeseries` / `profile`) hangi cizim fonksiyonunun kullanilacagini belirler.
+Bu yuzden yeni bir zaman serisi analizi (Rg, SASA) eklendiginde cizim koduna
+hic dokunulmaz.
+
+**4. Hata yalitimi ve idempotency.** `set -e` hic kullanilmaz; her eklenti alt
+kabukta kosar ve hatasi loglanip gecilir. Ciktilari zaten var olan is
+tekrarlanmaz, boylece yarida kesilen bir batch kaldigi yerden devam eder
+(`--force` bunu ezer).
+
+---
 
 ## Kurulum
 
@@ -31,52 +147,131 @@ kodda degisiklik gerekmez.
 | `POSTMD_SCRIPT` | Opsiyonel; yalnizca `--full-postmd` icin |
 | `COMPLEX_GROUPS` | Opsiyonel; cizimde kompleks gruplari, `"onek:etiket"` listesi |
 
-`COMPLEX_GROUPS` bu projede `("top:top*" "last:last*")`'tir; kompleks adi
-onekle basliyorsa karsilastirma panelinde o grubun rengini ve efsane
-etiketini alir. Bos birakilirsa panel **tek renkte ve grup efsanesi olmadan**
-cizilir -- baska bir veri setinde uydurma bir `top*/last*` efsanesi cikmasin
-diye.
-
-Zincir harfleri index kurulumunda **kanonik adlara** cevrilir:
-`RECEPTOR`, `AUX`, `LIGAND`, `RECEPTOR_BB`, `LIGAND_BB`. Analiz scriptleri
-yalnizca bu adlari bilir, zincir harflerini gormez.
+Zincir harfleri index kurulumunda kanonik adlara cevrilir; analiz scriptleri
+yalnizca `RECEPTOR`/`AUX`/`LIGAND`/`RECEPTOR_BB`/`LIGAND_BB` adlarini bilir,
+zincir harflerini hic gormez.
 
 ## Kullanim
 
 ```bash
 # Tek kompleks, tum replikalar, tum analizler
-./run_analysis.sh /veri/kok/last10_IMGQQPAPQV_A0201_pandora
+./run_analysis.sh /veri/kok/<kompleks>
 
 # Tum kompleksler, yalnizca RMSD
 ./run_analysis.sh --all -a rmsd /veri/kok
 
-# Once ne yapilacagini gor
+# Once ne yapilacagini gor (hicbir sey yazmaz)
 ./run_analysis.sh --all --dry-run /veri/kok
 
 # Mevcut analizleri listele
-# (TSV: ad, kind, aciklama, tum ciktilar, bunlarin opsiyonel olanlari)
+# TSV: ad, kind, aciklama, tum ciktilar, bunlarin opsiyonel olanlari
 ./run_analysis.sh --list
 
-# Sonuclari topla ve cizdir
+# Sonuclari topla, sonra cizdir
 python collect_results.py
 python plot_results.py --results-dir /veri/kok/results
 ```
 
 Butun secenekler icin `./run_analysis.sh --help`.
 
-## Birimler
+---
 
-`.xvg` ciktilari ve birlesik CSV'ler **ham** birimdedir: zaman ps, mesafe nm.
-`unit` kolonu bunu belirtir. ns ve Angstrom'a donusum yalnizca cizim
-katmanindadir.
+## Grafikler
 
-> `gmx`'in `-tu ns` secenegi `-b`/`-e` degerlerini de ns'e cevirir. Bu yuzden
-> arac icinde `-tu` **hic kullanilmaz**; aksi halde `-b 10000` "10 ns sonrasi"
-> yerine "10 000 ns sonrasi" anlamina gelir ve gmx uyarmadan bos cikti uretir.
+Cizim **iki adimdir**: once toplama, sonra cizme. Ikisini ayirmanin sebebi,
+cizim yaparken 105 dizini yeniden taramamak — ve grafik parametreleriyle
+oynarken gmx'i yeniden kosmamak.
+
+### Adim 1 — toplama
+
+```bash
+python collect_results.py                 # config.sh'teki RESULTS_DIR'e yazar
+python collect_results.py -c baska.sh     # baska bir config ile
+python collect_results.py -o /tmp/cikti   # baska bir dizine
+```
+
+Butun `rep*/analysis/*.xvg` dosyalarini gezer ve iki uzun-format CSV uretir:
+
+| Dosya | Kolonlar |
+|---|---|
+| `timeseries_long.csv` | `complex, replica, analysis, output, series, time_ps, value, unit` |
+| `profile_long.csv` | `complex, replica, analysis, output, series, residue, value, unit` |
+
+Hangi `.xvg`'nin hangi analize ve hangi sekle ait oldugunu `run_analysis.sh
+--list` ciktisindan ogrenir — bu eslesme Python'da **tekrarlanmaz**. Manifestoda
+olmayan bir `.xvg` atlanir ve stderr'e bir uyari yazilir (dosya basina bir kez).
+
+`series`, `.xvg` icindeki `@ s0 legend` satirlarindan gelir. `gmx rms` legend
+yazmadigi icin orada `@ subtitle` kullanilir — yani seri adi
+`LIGAND after lsq fit to RECEPTOR_BB` gibi kendini aciklayan bir metin olur.
+
+### Adim 2 — cizme
+
+```bash
+python plot_results.py --results-dir /veri/kok/results                  # ucu birden
+python plot_results.py --results-dir ... --per-complex                  # yalnizca biri
+python plot_results.py --results-dir ... --mean-sd --compare            # secerek
+python plot_results.py --results-dir ... --compare-output rmsf_mhc.xvg  # baska metrik
+```
+
+Mod verilmezse **ucu birden** kosar. `-c/--config` ile `COMPLEX_GROUPS` okunur.
+
+### Uc mod, uc soru
+
+| Mod | Cikti | Hangi soruya cevap verir |
+|---|---|---|
+| `--per-complex` | `plots/per_complex/<kompleks>_<cikti>.png` | *Bu simulasyon guvenilir mi?* Kompleks basina tek figur; rep1/rep2/rep3 ayri renkte ust uste. Replikalar ayrisiyorsa yakinsama yok demektir. |
+| `--mean-sd` | `plots/mean_sd/<kompleks>_<cikti>.png` | *Yayina/teze ne koyacagim?* Replika ortalamasi + ±SD seridi. Replikalar arasi sacilim belirsizlik bandi olarak gosterilir. |
+| `--compare` | `plots/compare_<cikti>.png` | *Hangi peptidler kararli?* Tum kompleksler tek panelde, **medyana gore artan** sirali boxplot. Her kutu bir kompleks, kutu icindeki noktalar replikalarin ortalamalari. |
+
+`--compare` varsayilan olarak `rmsd_pep_on_mhc.xvg`'yi kullanir (ana metrik);
+`--compare-output` ile baska bir cikti secilebilir.
+
+### Cok serili ciktilar
+
+Bir `.xvg` birden fazla seri tasiyorsa (ör. `gmx gyrate`: Rg, RgX, RgY, RgZ;
+`gmx hbond`: hbond sayisi + temas sayisi) her seri ayri cizilir:
+
+- `--per-complex`: **renk replikayi**, **cizgi tipi seriyi** gosterir. Boylece
+  uc replika x dort seri tek panelde karisiklik yaratmadan okunur.
+- `--mean-sd`: her seri kendi ortalama/SD bandini alir. Farkli fiziksel
+  buyuklukler **birbirine karistirilmaz** — aksi halde SD bandi replika
+  varyansi degil, seriler arasi fark olurdu ve anlamsiz bir hata cubugu cikardi.
+
+Tek serili ciktilarda gorunum degismez: duz cizgi, efsanede yalnizca replika adi.
+
+### Birimler
+
+CSV'ler **ham** birimdedir (zaman ps, mesafe nm) ve `unit` kolonu gmx'in ne
+dedigini tasir. Donusum yalnizca cizim aninda yapilir ve **birime bakarak**:
+`nm` ise x10 ve eksen "Å" olur; tanimadigi bir birimde (ör. `nm^2`) deger
+**cevrilmez**, eksen ham birimi gosterir ve stderr'e bir uyari yazilir.
+
+Bu bilincli: bilmedigimiz bir birimi cevirmis gibi yapmak, `gmx sasa` (nm²)
+eklendigi gun grafikleri sessizce 10 kat yanlis gosterirdi.
+
+### Renkler ve gruplar
+
+Replika renkleri ve grup renkleri, renk korlugu esiklerinden gecen bir paletten
+secilmistir (uc replika cizgisi ust uste bindigi icin gerekli).
+
+`COMPLEX_GROUPS` bu projede `("top:top*" "last:last*")`'tir: kompleks adi onekle
+basliyorsa karsilastirma panelinde o grubun rengini ve efsane etiketini alir.
+**Bos birakilirsa panel tek renkte ve grup efsanesi olmadan cizilir** — baska
+bir veri setinde uydurma bir `top*/last*` efsanesi cikmasin diye.
+
+### Bir kompleksin cizimi patlarsa
+
+Cizim dongusu de yalitimlidir: tek bir (kompleks, cikti) ciftinin hatasi
+stderr'e adiyla yazilir ve digerleri cizilmeye devam eder. Gozetimsiz bir
+kosuda tek bozuk kompleks yuzunden butun grafikleri kaybetmezsiniz.
+
+---
 
 ## Yeni analiz ekleme
 
-`analysis/` icine bir `.sh` dosyasi koyun. `run_analysis.sh` degismez.
+`analysis/` icine bir `.sh` dosyasi koyun. `run_analysis.sh` degismez,
+`collect_results.py` degismez, `plot_results.py` degismez.
 
 ```bash
 ANALYSIS_NAME="gyrate"
@@ -90,48 +285,63 @@ ANALYSIS_OPTIONAL_OUTPUTS=()        # ilan edilen ama uretilmeyebilen ciktilar
 analysis_run() {
     local rep_dir="$1" out_dir="$2"
     # Kullanilabilir degiskenler:
-    #   $GMX       gmx ikili dosyasi
-    #   $REF_PDB   referans yapi (zincir ID'leri korunmus)
-    #   $XTC       trajektori
-    #   $NDX       kanonik gruplu index.ndx
-    #   $B_PS      etkin equilibration cutoff (ps)
-    #   $FORCE     1 ise eklentinin kendi ara artefaktlari da yeniden kurulur
+    #   $GMX        gmx ikili dosyasi
+    #   $REF_PDB    referans yapi (zincir ID'leri korunmus)
+    #   $XTC        trajektori
+    #   $NDX        kanonik gruplu index.ndx
+    #   $B_PS       etkin equilibration cutoff (ps)
+    #   $FORCE      1 ise eklentinin kendi ara artefaktlari da yeniden kurulur
     #   $GROOVE_FIT 1 ise --groove-fit verilmistir (opsiyonel yolu acar)
     "$GMX" gyrate -s "$REF_PDB" -f "$XTC" -n "$NDX" \
-        -o "$out_dir/gyrate.xvg" -b "$B_PS" <<< 'LIGAND'
+        -o "$out_dir/gyrate.xvg" -b "$B_PS" <<< 'LIGAND' \
+        || { echo "gmx gyrate basarisiz" >&2; return 1; }
 }
 ```
 
-`ANALYSIS_NEEDS_INDEX=1`, analiz kosmadan once `analysis/index.ndx`'in
-kurulmasini ister (kanonik grup adlari icin). `$GROOVE_FIT`, kullanicinin
-`--groove-fit` verip vermedigini soyler; eklenti ek/pahali bir yolu buna
-gore acar.
+Bu kadar. `--list` onu otomatik gorur, `run_analysis.sh -a gyrate` calistirir,
+`collect_results.py` `timeseries_long.csv`'ye ekler, `plot_results.py` cizer.
 
-**`ANALYSIS_OUTPUTS` KOSULSUZ ilan edilir.** Manifesto (`run_analysis.sh
---list`) `--groove-fit` gibi secenekleri bilmeyen TAZE bir kabukta okunur;
-bir ciktiyi kosullu ilan etmek onu manifestodan dusurur ve
-`collect_results.py` diskteki dosyayi sessizce atlar. Kosula bagli uretilen
-ciktilar `ANALYSIS_OPTIONAL_OUTPUTS` icinde de listelenir: boylece
-idempotency kontrolu onlari ARAMAZ (yoksa hic uretilmeyen bir cikti yuzunden
-analiz her seferinde yeniden kosardi), ama toplama manifestosunda kalirlar.
+### Dikkat edilecek uc sey
 
-`ANALYSIS_KIND` cizim katmaninin hangi fonksiyonu kullanacagini belirler.
-`timeseries` ve `profile` icin yeni cizim kodu gerekmez. Cok serili bir
-`.xvg` (ör. `gyrate`: Rg, RgX, RgY, RgZ) de calisir: her seri ayri bir cizgi
-ve ayri bir ortalama/SD bandi olur.
+**`ANALYSIS_OUTPUTS` KOSULSUZ ilan edilir.** Manifesto (`--list`) `--groove-fit`
+gibi secenekleri bilmeyen TAZE bir kabukta okunur; bir ciktiyi kosullu ilan
+etmek onu manifestodan dusurur ve `collect_results.py` diskteki dosyayi
+atlar. Kosula bagli uretilen ciktilar ayrica `ANALYSIS_OPTIONAL_OUTPUTS`
+icinde listelenir: boylece idempotency kontrolu onlari ARAMAZ (yoksa hic
+uretilmeyen bir cikti yuzunden analiz her seferinde yeniden kosardi), ama
+toplama manifestosunda kalirlar. `rmsf.sh` bunun ornegidir.
 
-Eksik sozlesme sessiz kalmaz: `ANALYSIS_NAME`, `ANALYSIS_KIND`,
+**Her gmx cagrisi hata durumunda `return 1` yapmali.** Yoksa runner kismi bir
+sonucu basari sayar. Hata mesajlari `>&2`'ye yazilir; runner onlari yakalayip
+`run_log.csv`'nin `error` kolonuna koyar.
+
+**Eksik sozlesme sessiz kalmaz.** `ANALYSIS_NAME`, `ANALYSIS_KIND`,
 `ANALYSIS_DESC`, `ANALYSIS_DEFAULT_BEGIN`, `ANALYSIS_OUTPUTS` veya
 `analysis_run` tanimsizsa o eklenti `HATA` olarak loglanir ve kosu diger
 analizlerle devam eder. Dosya adi `_` ile baslayan eklentiler otomatik
 kesiften duser (yalnizca `-a _ad` ile acikca secilebilirler).
 
-**`matrix` henuz desteklenmiyor:** `ANALYSIS_KIND` sozlesme olarak `matrix`
-degerini kabul eder, ama ne `collect_results.py` ne de `plot_results.py` bunu
-tuketir. `matrix` ilan eden bir analiz calisir ve `.xvg` ciktisi uretir, fakat
-toplama asamasinda hicbir CSV'ye girmez; `collect_results.py` bu durumda
-stderr'e bir uyari yazar (cikti dosyasi ve kind adiyla, cikti basina en fazla
-bir kez). Bu bilinen bir sinirdir, sessiz veri kaybi degil.
+### `matrix` henuz desteklenmiyor
+
+`ANALYSIS_KIND` sozlesme olarak `matrix` degerini kabul eder, ama ne
+`collect_results.py` ne de `plot_results.py` bunu tuketir. `matrix` ilan eden
+bir analiz calisir ve `.xvg` ciktisi uretir, fakat toplama asamasinda hicbir
+CSV'ye girmez; `collect_results.py` stderr'e bir uyari yazar (cikti dosyasi ve
+kind adiyla, cikti basina en fazla bir kez). Bu **bilinen bir sinirdir, sessiz
+veri kaybi degil.** DSSP gibi 2B ciktili analizler icin once bu katmanlarin
+`matrix` destegi yazilmalidir.
+
+---
+
+## Birimler ve `-tu` tuzagi
+
+Arac icinde tum zamanlar **ps**, tum mesafeler **nm**'dir. Donusum yalnizca
+cizim katmanindadir.
+
+> `gmx`'in `-tu ns` secenegi yalnizca cikti eksenini degil, **`-b`/`-e`
+> degerlerini de** ns'e cevirir. Bu yuzden arac icinde `-tu` **hic
+> kullanilmaz**; aksi halde `-b 10000` "10 ns sonrasi" yerine "10 000 ns
+> sonrasi" anlamina gelir ve gmx uyarmadan bos cikti uretir.
 
 ## Durum sozlugu
 
@@ -145,11 +355,11 @@ bir kez). Bu bilinen bir sinirdir, sessiz veri kaybi degil.
 | `HATA` | gmx veya dogrulama hatasi; `error` kolonunda mesaj |
 
 Kolonlar: `timestamp,complex,replica,analysis,status,seconds,begin_ps,error`.
-`begin_ps`, o satiri ureten **etkin** equilibration cutoff'udur (`-b`
-verilmisse o, yoksa analizin `ANALYSIS_DEFAULT_BEGIN`'i). `SKIP_DONE` ve
-`SKIP_MISSING` satirlarinda kullanilacak OLAN degeri tasir. Bu kolon
-olmadan, farkli `-b` ile hesaplanmis replikalar birlesik bir CSV'de
-ayirt edilemez.
+
+`begin_ps`, o satiri ureten **etkin** equilibration cutoff'udur (`-b` verilmisse
+o, yoksa analizin `ANALYSIS_DEFAULT_BEGIN`'i). `SKIP_DONE` ve `SKIP_MISSING`
+satirlarinda kullanilacak OLAN degeri tasir. Bu kolon olmadan, farkli `-b` ile
+hesaplanmis replikalar birlesik bir CSV'de ayirt edilemezdi.
 
 ## Testler
 
