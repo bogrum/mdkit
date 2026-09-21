@@ -27,6 +27,7 @@ def test_tek_kompleks_modu_hedefi_aynen_dondurur(lib, fake_config, fake_dataset)
 def test_rep_status_tam_replikada_ok(lib, fake_config, fake_dataset):
     rep = fake_dataset / "last1_AAA_A0201_pandora" / "rep1"
     r = run_bash(PRE.format(lib=lib, cfg=fake_config) + f'mdkit_rep_status "{rep}"')
+    assert r.returncode == 0
     assert r.stdout.strip() == "OK"
 
 
@@ -34,6 +35,7 @@ def test_rep_status_eksik_ref_bildirir(lib, fake_config, fake_dataset):
     rep = fake_dataset / "last1_AAA_A0201_pandora" / "rep1"
     (rep / "check_ref.pdb").unlink()
     r = run_bash(PRE.format(lib=lib, cfg=fake_config) + f'mdkit_rep_status "{rep}"')
+    assert r.returncode == 0
     assert r.stdout.strip() == "NO_REF"
 
 
@@ -41,6 +43,7 @@ def test_rep_status_eksik_traj_bildirir(lib, fake_config, fake_dataset):
     rep = fake_dataset / "last1_AAA_A0201_pandora" / "rep2"
     (rep / "traj_compact_center_dry.xtc").unlink()
     r = run_bash(PRE.format(lib=lib, cfg=fake_config) + f'mdkit_rep_status "{rep}"')
+    assert r.returncode == 0
     assert r.stdout.strip() == "NO_TRAJ"
 
 
