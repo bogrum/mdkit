@@ -102,3 +102,45 @@ def test_begin_verilmezse_analiz_varsayilani_kullanilir(mdkit, fake_config, fake
         str(fake_dataset / "top1_BBB_A0201_pandora"),
     )
     assert "(b=0)" in r2.stdout
+
+
+@pytest.mark.parametrize("flag", ["--config", "-b"])
+def test_deger_gerektiren_secenek_degersiz_hata(mdkit, flag):
+    # Regresyon: -c/-a/-r/-b degersiz birakilirsa shift 2 basarisiz olur ve
+    # set -e olmadigi icin dongu ayni $1'i sonsuza kadar isler. timeout=10
+    # olmadan bu test, gelecekte bu koruma bozulursa, TAKILIR (fail degil,
+    # hic bitmez) -- suit'in geri kalanini da kilitler. timeout burada
+    # "guzel olsun" degil, bu testin kendisinin asla asilamamasi icin sart.
+    r = run_cli(mdkit, flag, timeout=10)
+    assert r.returncode == 2
+    assert "deger gerektirir" in r.stderr
+
+
+def test_iki_pozisyonel_hedef_hata(mdkit, fake_config, fake_dataset, tmp_path):
+    other = tmp_path / "baska_dizin"
+    other.mkdir()
+    r = run_cli(
+        mdkit, "--config", str(fake_config), "--dry-run",
+        str(fake_dataset / "top1_BBB_A0201_pandora"), str(other),
+    )
+    assert r.returncode == 2
+    assert "hedef" in r.stderr.lower()
+
+
+def test_bozuk_plugin_list_basarisiz_olur(mdkit, fake_config):
+    plugin = mdkit / "analysis" / "_zz_test_bozuk_plugin.sh"
+    plugin.write_text(
+        "#!/usr/bin/env bash\n"
+        'ANALYSIS_NAME="bozuk"\n'
+        'ANALYSIS_DESC="ANALYSIS_KIND kasten eksik"\n'
+        "ANALYSIS_NEEDS_INDEX=1\n"
+        "ANALYSIS_DEFAULT_BEGIN=0\n"
+        "ANALYSIS_OUTPUTS=(x.xvg)\n"
+        'analysis_run() { return 1; }\n'
+    )
+    try:
+        r = run_cli(mdkit, "--config", str(fake_config), "--list", timeout=10)
+        assert r.returncode != 0
+        assert "_zz_test_bozuk_plugin.sh" in r.stderr
+    finally:
+        plugin.unlink()

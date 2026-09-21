@@ -33,12 +33,16 @@ USAGE
 CONFIG=""; ANALYSES=""; TARGET=""; REPS_OPT=""; BEGIN_OPT=""
 ALL=0; GROOVE_FIT=0; FORCE=0; FULL_POSTMD=0; ASSUME_YES=0; DRY_RUN=0; LIST=0
 
+require_value() {
+    [[ $# -ge 2 ]] || { echo "secenek deger gerektirir: $1" >&2; exit 2; }
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -c|--config)   CONFIG="${2:-}";    shift 2 ;;
-        -a|--analysis) ANALYSES="${2:-}";  shift 2 ;;
-        -r|--reps)     REPS_OPT="${2:-}";  shift 2 ;;
-        -b|--begin)    BEGIN_OPT="${2:-}"; shift 2 ;;
+        -c|--config)   require_value "$@"; CONFIG="$2";    shift 2 ;;
+        -a|--analysis) require_value "$@"; ANALYSES="$2";  shift 2 ;;
+        -r|--reps)     require_value "$@"; REPS_OPT="$2";  shift 2 ;;
+        -b|--begin)    require_value "$@"; BEGIN_OPT="$2"; shift 2 ;;
         --all)         ALL=1;          shift ;;
         --groove-fit)  GROOVE_FIT=1;   shift ;;
         --force)       FORCE=1;        shift ;;
@@ -48,7 +52,12 @@ while [[ $# -gt 0 ]]; do
         -n|--dry-run)  DRY_RUN=1;      shift ;;
         -h|--help)     usage; exit 0 ;;
         -*)            echo "bilinmeyen secenek: $1" >&2; usage >&2; exit 2 ;;
-        *)             TARGET="$1";    shift ;;
+        *)
+            if [[ -n "$TARGET" ]]; then
+                echo "birden fazla hedef verildi: $TARGET, $1" >&2
+                exit 2
+            fi
+            TARGET="$1"; shift ;;
     esac
 done
 
@@ -71,10 +80,11 @@ else
 fi
 
 if [[ "$LIST" == 1 ]]; then
+    list_status=0
     for f in "${selected[@]}"; do
-        mdkit_analysis_meta "$f"
+        mdkit_analysis_meta "$f" || { echo "mdkit: metadata okunamadi: $f" >&2; list_status=1; }
     done
-    exit 0
+    exit "$list_status"
 fi
 
 if [[ -z "$TARGET" ]]; then
