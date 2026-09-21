@@ -197,3 +197,23 @@ mdkit_run_isolated() {
     MDKIT_LAST_ERROR="$(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
     return 1
 }
+
+mdkit_analysis_scripts() {
+    local f
+    for f in "$MDKIT_DIR/analysis"/*.sh; do
+        [[ -f "$f" ]] || continue
+        [[ "$(basename "$f")" == "lib.sh" ]] && continue
+        printf '%s\n' "$f"
+    done
+}
+
+mdkit_analysis_meta() {
+    # $1 = analiz scripti -> name<TAB>kind<TAB>desc<TAB>output1,output2
+    # Alt kabukta source edilir; degiskenler ana kabuga sizmaz.
+    (
+        source "$1" || exit 1
+        local IFS=,
+        printf '%s\t%s\t%s\t%s\n' \
+            "$ANALYSIS_NAME" "$ANALYSIS_KIND" "$ANALYSIS_DESC" "${ANALYSIS_OUTPUTS[*]}"
+    )
+}
