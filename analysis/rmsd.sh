@@ -15,15 +15,15 @@ analysis_run() {
 
     "$GMX" rms -s "$REF_PDB" -f "$XTC" -n "$NDX" \
         -o "$out_dir/rmsd_pep_on_mhc.xvg" -b "$B_PS" <<< $'RECEPTOR_BB\nLIGAND' \
-        || { echo "gmx rms basarisiz: rmsd_pep_on_mhc"; return 1; }
+        || { echo "gmx rms basarisiz: rmsd_pep_on_mhc" >&2; return 1; }
 
     "$GMX" rms -s "$REF_PDB" -f "$XTC" -n "$NDX" \
         -o "$out_dir/rmsd_pep_internal.xvg" -b "$B_PS" <<< $'LIGAND_BB\nLIGAND' \
-        || { echo "gmx rms basarisiz: rmsd_pep_internal"; return 1; }
+        || { echo "gmx rms basarisiz: rmsd_pep_internal" >&2; return 1; }
 
     "$GMX" rms -s "$REF_PDB" -f "$XTC" -n "$NDX" \
         -o "$out_dir/rmsd_mhc_bb.xvg" -b "$B_PS" <<< $'Backbone\nBackbone' \
-        || { echo "gmx rms basarisiz: rmsd_mhc_bb"; return 1; }
+        || { echo "gmx rms basarisiz: rmsd_mhc_bb" >&2; return 1; }
 
     return 0
 }

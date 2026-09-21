@@ -89,12 +89,16 @@ def test_begin_secenegi_frameleri_kirpar(mdkit, real_config, tmp_path):
 
 
 @needs_gmx
-def test_ic_rmsd_toplam_rmsdden_kucuk(mdkit, real_config, tmp_path):
-    """Peptidin kendi uzerine fit edilmisi, olugun uzerine fit edilmisinden
-    kucuk olmali (rijit-cisim hareketi cikarilmis olur)."""
+def test_ic_ve_toplam_rmsd_farkli_fit_grubundan_gelir(mdkit, real_config, tmp_path):
+    """rmsd_pep_on_mhc (fit RECEPTOR_BB) ve rmsd_pep_internal (fit LIGAND_BB)
+    farkli fit gruplari kullanir. Ayni sayida frame uretmeliler, ama
+    egrileri birebir ayni OLMAMALI -- ayniysa fit grubu hesaplamayi
+    etkilemiyor demektir (ör. iki gmx rms cagrisina yanlislikla ayni fit
+    grubu verilmis olabilir)."""
     run_cli(mdkit, "-c", str(real_config), "-y", "-a", "rmsd",
             str(tmp_path / "data" / "test1_PEPTIDE_A0201_pandora"))
     out = tmp_path / "data" / "test1_PEPTIDE_A0201_pandora" / "rep1" / "analysis"
     total = [float(ln.split()[1]) for ln in data_rows(out / "rmsd_pep_on_mhc.xvg")]
     internal = [float(ln.split()[1]) for ln in data_rows(out / "rmsd_pep_internal.xvg")]
-    assert sum(internal) <= sum(total) + 1e-9
+    assert len(total) == len(internal)
+    assert total != internal
