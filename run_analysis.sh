@@ -132,5 +132,105 @@ if [[ "$DRY_RUN" == 1 ]]; then
     exit 0
 fi
 
+mdkit_resolve_gmx || exit 1
+# mdkit_log_init her mdkit_log_row cagrisindan ONCE calismalidir -- MDKIT_LOG'u
+# o ayarlar; aksi halde ilk log_row cagrisi "ambiguous redirect" ile patlar.
+mdkit_log_init || exit 1
+
 echo "mdkit: ${#complexes[@]} kompleks, ${#REPS[@]} replika, ${#selected[@]} analiz"
-echo "mdkit: yurutme dongusu Task 6'da eklenecek"
+
+# --- eksik referans PDB'leri: tek seferlik onay, sonra kaldigi yerden devam ---
+missing_refs=()
+for cx in "${complexes[@]}"; do
+    for rep in "${REPS[@]}"; do
+        [[ -d "$cx/$rep" ]] || continue
+        if [[ "$(mdkit_rep_status "$cx/$rep")" == "NO_REF" ]]; then
+            missing_refs+=("$cx/$rep")
+        fi
+    done
+done
+
+if [[ ${#missing_refs[@]} -gt 0 ]]; then
+    echo "${#missing_refs[@]} replikada $REF_NAME eksik."
+    approve=0
+    if [[ "$ASSUME_YES" == 1 ]]; then
+        approve=1
+    else
+        read -r -p "Mevcut kuru trajektoriden uretilsin mi? [e/H] " answer
+        [[ "$answer" == [eE] ]] && approve=1
+    fi
+    if [[ "$approve" == 1 ]]; then
+        for rd in "${missing_refs[@]}"; do
+            if [[ "$FULL_POSTMD" == 1 ]]; then
+                if [[ -z "${POSTMD_SCRIPT:-}" || ! -f "${POSTMD_SCRIPT:-}" ]]; then
+                    echo "--full-postmd icin config'de POSTMD_SCRIPT tanimli olmali" >&2
+                    exit 2
+                fi
+                ( cd "$rd" && bash "$POSTMD_SCRIPT" ) >/dev/null 2>&1 \
+                    || echo "post_md_script basarisiz: $rd" >&2
+            else
+                mdkit_make_ref "$rd" || echo "$REF_NAME uretilemedi: $rd" >&2
+            fi
+        done
+    else
+        echo "uretilmedi; bu replikalar SKIP_MISSING olarak loglanacak."
+    fi
+fi
+
+# --- ana dongu ---
+for cx in "${complexes[@]}"; do
+    cname="$(mdkit_complex_name "$cx")"
+    for rep in "${REPS[@]}"; do
+        rep_dir="$cx/$rep"
+        [[ -d "$rep_dir" ]] || continue
+
+        status="$(mdkit_rep_status "$rep_dir")"
+        if [[ "$status" != "OK" ]]; then
+            echo "$cname/$rep: $status -- atlaniyor"
+            mdkit_log_row "$cname" "$rep" "-" SKIP_MISSING 0 "$status"
+            continue
+        fi
+
+        out_dir="$rep_dir/analysis"
+        mkdir -p "$out_dir"
+        [[ "$FORCE" == 1 ]] && rm -f "$out_dir/index.ndx"
+
+        for script in "${selected[@]}"; do
+            # shellcheck source=/dev/null
+            source "$script"
+            begin_ps="${BEGIN_OPT:-$ANALYSIS_DEFAULT_BEGIN}"
+
+            if [[ "$FORCE" != 1 ]] && \
+               mdkit_outputs_present "$out_dir" "${ANALYSIS_OUTPUTS[@]}"; then
+                echo "$cname/$rep/$ANALYSIS_NAME: mevcut -- atlaniyor"
+                mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" SKIP_DONE 0
+                continue
+            fi
+
+            if [[ "${ANALYSIS_NEEDS_INDEX:-0}" == 1 && ! -s "$out_dir/index.ndx" ]]; then
+                if ! mdkit_build_index "$rep_dir" "$out_dir"; then
+                    mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" HATA 0 "index kurulamadi"
+                    continue
+                fi
+            fi
+
+            # Analiz scriptlerinin gordugu sozlesme degiskenleri
+            REF_PDB="$rep_dir/$REF_NAME"
+            XTC="$rep_dir/$TRAJ_NAME"
+            NDX="$out_dir/index.ndx"
+            B_PS="$begin_ps"
+
+            t0=$SECONDS
+            if mdkit_run_isolated "$script" "$rep_dir" "$out_dir"; then
+                echo "$cname/$rep/$ANALYSIS_NAME: tamam ($((SECONDS - t0))s)"
+                mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" OK "$((SECONDS - t0))"
+            else
+                echo "$cname/$rep/$ANALYSIS_NAME: HATA -- $MDKIT_LAST_ERROR" >&2
+                mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" HATA \
+                    "$((SECONDS - t0))" "$MDKIT_LAST_ERROR"
+            fi
+        done
+    done
+done
+
+echo "mdkit: bitti. log -> $MDKIT_LOG"

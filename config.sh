@@ -22,3 +22,7 @@ REF_NAME="check_ref.pdb"
 CHAIN_RECEPTOR="A"   # MHC agir zincir
 CHAIN_AUX="B"        # beta-2 mikroglobulin
 CHAIN_LIGAND="C"     # peptid
+
+# Opsiyonel: --full-postmd icin tam post-MD scripti. Bos birakilirsa
+# --full-postmd hata verir ve yalnizca hizli yol (-dump 0) kullanilabilir.
+POSTMD_SCRIPT="/home/emre/workspace/TUSEB-Bitirme/scratch/mdsimulations/system_prep/post_md_script.sh"
