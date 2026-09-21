@@ -371,3 +371,19 @@ cd tests && python -m pytest -v -m slow    # tam trajektori gerektirenler
 Gercek veriye bakan testler `MDKIT_TEST_DATA_ROOT`, `MDKIT_TEST_REP` ve
 `MDKIT_TEST_GMX` ortam degiskenleriyle baska bir makineye yonlendirilebilir.
 Veri veya gmx yoksa ilgili testler atlanir.
+
+---
+
+## Tasarim belgeleri
+
+`docs/` altinda, aracin neden boyle yazildigini anlatan iki belge var:
+
+- **`docs/design.md`** — tasarim spec'i. GROMACS davranisi hakkinda komutla
+  dogrulanmis bulgular (`-tu` tuzagi, hangi tpr'nin zincir ID'lerini tasidigi,
+  `gmx rmsf`'in fit davranisi), kanonik grup adlarinin gerekcesi, eklenti
+  sozlesmesinin sekli. Araci degistirecek biri once bunu okumali.
+- **`docs/implementation-plan.md`** — aracin 11 adimda nasil kuruldugunu
+  gosteren uygulama plani. Tarihsel kayit; gunluk kullanim icin gerekmez.
+
+Bu depo `TUSEB-Bitirme/scratch` deposundan `git subtree split` ile cikarilmistir;
+19 commit'lik gecmis korunmustur.
