@@ -94,3 +94,28 @@ def test_groove_fit_idempotency_ucuncu_ciktiyi_da_sayar(mdkit, real_config, tmp_
     assert (out / "rmsf_pep_groovefit.xvg").exists()
     rows = list(csv.DictReader((tmp_path / "results" / "run_log.csv").open()))
     assert rows[-1]["status"] == "OK"
+
+
+@needs_gmx
+def test_force_traj_fit_de_yeniden_kurar(mdkit, real_config, tmp_path):
+    """--force, index.ndx gibi traj_fit_mhc.xtc'yi de yeniden kurmali.
+
+    Aksi halde kesintiye ugramis/bozuk (ör. islem oldurulmus, disk dolmus)
+    bir fitli trajektori --force verilse bile sessizce yeniden kullanilir
+    ve groove-fit RMSF'si bozuk veriden hesaplanir -- gurultusuz sekilde
+    yanlis bilimsel cikti uretilir.
+    """
+    target = str(tmp_path / "data" / "test1_PEPTIDE_A0201_pandora")
+    r1 = run_cli(mdkit, "-c", str(real_config), "-y", "-a", "rmsf", "-b", "0",
+                 "--groove-fit", target)
+    rep = tmp_path / "data" / "test1_PEPTIDE_A0201_pandora" / "rep1"
+    fitted = rep / "traj_fit_mhc.xtc"
+    assert fitted.exists(), r1.stderr
+
+    garbage = b"bozuk ve gecersiz icerik\n"
+    fitted.write_bytes(garbage)
+
+    r2 = run_cli(mdkit, "-c", str(real_config), "-y", "-a", "rmsf", "-b", "0",
+                 "--groove-fit", "--force", target)
+    assert fitted.read_bytes() != garbage, r2.stderr
+    assert (rep / "analysis" / "rmsf_pep_groovefit.xvg").exists(), r2.stderr

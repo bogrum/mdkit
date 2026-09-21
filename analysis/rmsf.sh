@@ -31,10 +31,13 @@ analysis_run() {
     if [[ "${GROOVE_FIT:-0}" == "1" ]]; then
         local fitted="$rep_dir/traj_fit_mhc.xtc"
         # Fitli trajektori saklanir: ileride PCA/DCCM ayni dosyayi isteyecek.
+        # --force ile bu eklentinin sahip oldugu artefakt da yeniden kurulur
+        # (index.ndx'in --force ile yeniden kurulmasiyla simetrik).
+        [[ "${FORCE:-0}" == "1" ]] && rm -f "$fitted"
         if [[ ! -s "$fitted" ]]; then
             "$GMX" trjconv -s "$REF_PDB" -f "$XTC" -n "$NDX" \
                 -fit rot+trans -o "$fitted" <<< $'RECEPTOR_BB\nSystem' \
-                || { echo "gmx trjconv -fit basarisiz" >&2; return 1; }
+                || { echo "gmx trjconv -fit basarisiz" >&2; rm -f "$fitted"; return 1; }
         fi
         "$GMX" rmsf -s "$REF_PDB" -f "$fitted" -n "$NDX" \
             -o "$out_dir/rmsf_pep_groovefit.xvg" -res -nofit -b "$B_PS" <<< 'LIGAND' \

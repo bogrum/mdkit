@@ -219,6 +219,7 @@ for cx in "${complexes[@]}"; do
             XTC="$rep_dir/$TRAJ_NAME"
             NDX="$out_dir/index.ndx"
             B_PS="$begin_ps"
+            FORCE="$FORCE"
 
             t0=$SECONDS
             if mdkit_run_isolated "$script" "$rep_dir" "$out_dir"; then
