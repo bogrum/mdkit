@@ -10,11 +10,20 @@ ANALYSIS_DESC="Residue bazli RMSF profilleri (peptid ic, MHC, opsiyonel oluk-cer
 ANALYSIS_KIND="profile"
 ANALYSIS_NEEDS_INDEX=1
 ANALYSIS_DEFAULT_BEGIN=10000
-ANALYSIS_OUTPUTS=(rmsf_pep_self.xvg rmsf_mhc.xvg)
+# ILAN kosulsuzdur, URETIM kosulludur. Manifesto (`--list`) --groove-fit
+# bilmeyen TAZE bir kabukta okunur; ucuncu ciktiyi kosullu ilan etmek onu
+# manifestodan dusuruyor, collect_results.py da diskteki dosyayi SESSIZCE
+# atliyordu -- saatlerce hesaplanan 105 dosya hicbir CSV'ye girmiyordu.
+ANALYSIS_OUTPUTS=(rmsf_pep_self.xvg rmsf_mhc.xvg rmsf_pep_groovefit.xvg)
 
-# --groove-fit ile ucuncu cikti eklenir; idempotency kontrolu onu da saymali.
+# --groove-fit verilmediginde ucuncu cikti mesru sekilde YOKTUR; idempotency
+# kontrolu onu aramamalidir. Verildiginde zorunlu olur, yoksa daha once
+# --groove-fit'siz kosmus bir replika SKIP_DONE alip ucuncu ciktiyi hic
+# uretmezdi.
 if [[ "${GROOVE_FIT:-0}" == "1" ]]; then
-    ANALYSIS_OUTPUTS+=(rmsf_pep_groovefit.xvg)
+    ANALYSIS_OPTIONAL_OUTPUTS=()
+else
+    ANALYSIS_OPTIONAL_OUTPUTS=(rmsf_pep_groovefit.xvg)
 fi
 
 analysis_run() {

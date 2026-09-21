@@ -63,6 +63,16 @@ done
 
 mdkit_load_config "$CONFIG" || exit 1
 
+# --full-postmd dogrulamasi HERHANGI bir is baslamadan once yapilir: bu kontrol
+# eksik-referans dongusunun icinde dururken, onlarca replika islendikten sonra
+# exit 2 ile dusuyordu.
+if [[ "$FULL_POSTMD" == 1 ]]; then
+    if [[ -z "${POSTMD_SCRIPT:-}" || ! -f "${POSTMD_SCRIPT:-}" ]]; then
+        echo "--full-postmd icin config'de POSTMD_SCRIPT tanimli olmali" >&2
+        exit 2
+    fi
+fi
+
 # --- analiz secimi ---
 selected=()
 if [[ -n "$ANALYSES" ]]; then
@@ -120,7 +130,8 @@ if [[ "$DRY_RUN" == 1 ]]; then
                 continue
             fi
             for f in "${selected[@]}"; do
-                IFS=$'\t' read -r a_name a_kind a_desc a_outs < <(mdkit_analysis_meta "$f")
+                IFS=$'\t' read -r a_name a_kind a_desc a_outs a_opt \
+                    < <(mdkit_analysis_meta "$f")
                 a_begin="$BEGIN_OPT"
                 if [[ -z "$a_begin" ]]; then
                     a_begin="$( source "$f"; printf '%s' "$ANALYSIS_DEFAULT_BEGIN" )"
@@ -162,10 +173,6 @@ if [[ ${#missing_refs[@]} -gt 0 ]]; then
     if [[ "$approve" == 1 ]]; then
         for rd in "${missing_refs[@]}"; do
             if [[ "$FULL_POSTMD" == 1 ]]; then
-                if [[ -z "${POSTMD_SCRIPT:-}" || ! -f "${POSTMD_SCRIPT:-}" ]]; then
-                    echo "--full-postmd icin config'de POSTMD_SCRIPT tanimli olmali" >&2
-                    exit 2
-                fi
                 ( cd "$rd" && bash "$POSTMD_SCRIPT" ) >/dev/null 2>&1 \
                     || echo "post_md_script basarisiz: $rd" >&2
             else
@@ -187,7 +194,7 @@ for cx in "${complexes[@]}"; do
         status="$(mdkit_rep_status "$rep_dir")"
         if [[ "$status" != "OK" ]]; then
             echo "$cname/$rep: $status -- atlaniyor"
-            mdkit_log_row "$cname" "$rep" "-" SKIP_MISSING 0 "$status"
+            mdkit_log_row "$cname" "$rep" "-" SKIP_MISSING 0 "${BEGIN_OPT:--}" "$status"
             continue
         fi
 
@@ -196,20 +203,34 @@ for cx in "${complexes[@]}"; do
         [[ "$FORCE" == 1 ]] && rm -f "$out_dir/index.ndx"
 
         for script in "${selected[@]}"; do
+            # Onceki eklentinin sozlesmesi TEMIZLENIR. Aksi halde eksik bir
+            # metadata ya set -u ile tum batch'i dusurur ya da bir onceki
+            # eklentinin degerini (hatta analysis_run govdesini) miras alir.
+            mdkit_clear_plugin
             # shellcheck source=/dev/null
-            source "$script"
+            source "$script" || true
+            if ! mdkit_validate_plugin "$script"; then
+                echo "$cname/$rep: HATA -- $MDKIT_LAST_ERROR" >&2
+                mdkit_log_row "$cname" "$rep" "$(basename "$script" .sh)" HATA 0 \
+                    "${BEGIN_OPT:--}" "$MDKIT_LAST_ERROR"
+                continue
+            fi
             begin_ps="${BEGIN_OPT:-$ANALYSIS_DEFAULT_BEGIN}"
 
-            if [[ "$FORCE" != 1 ]] && \
-               mdkit_outputs_present "$out_dir" "${ANALYSIS_OUTPUTS[@]}"; then
+            # Idempotency yalnizca ZORUNLU ciktilara bakar; opsiyonel ciktilar
+            # (ör. --groove-fit) manifestoda ilan edilir ama uretilmeyebilir.
+            mapfile -t mandatory < <(mdkit_mandatory_outputs)
+            if [[ "$FORCE" != 1 ]] && [[ ${#mandatory[@]} -gt 0 ]] && \
+               mdkit_outputs_present "$out_dir" "${mandatory[@]}"; then
                 echo "$cname/$rep/$ANALYSIS_NAME: mevcut -- atlaniyor"
-                mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" SKIP_DONE 0
+                mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" SKIP_DONE 0 "$begin_ps"
                 continue
             fi
 
             if [[ "${ANALYSIS_NEEDS_INDEX:-0}" == 1 && ! -s "$out_dir/index.ndx" ]]; then
                 if ! mdkit_build_index "$rep_dir" "$out_dir"; then
-                    mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" HATA 0 "index kurulamadi"
+                    mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" HATA 0 \
+                        "$begin_ps" "index kurulamadi"
                     continue
                 fi
             fi
@@ -224,11 +245,12 @@ for cx in "${complexes[@]}"; do
             t0=$SECONDS
             if mdkit_run_isolated "$script" "$rep_dir" "$out_dir"; then
                 echo "$cname/$rep/$ANALYSIS_NAME: tamam ($((SECONDS - t0))s)"
-                mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" OK "$((SECONDS - t0))"
+                mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" OK \
+                    "$((SECONDS - t0))" "$begin_ps"
             else
                 echo "$cname/$rep/$ANALYSIS_NAME: HATA -- $MDKIT_LAST_ERROR" >&2
                 mdkit_log_row "$cname" "$rep" "$ANALYSIS_NAME" HATA \
-                    "$((SECONDS - t0))" "$MDKIT_LAST_ERROR"
+                    "$((SECONDS - t0))" "$begin_ps" "$MDKIT_LAST_ERROR"
             fi
         done
     done

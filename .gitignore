@@ -1,0 +1,5 @@
+# mdkit kendi basina bir depoya cikarilabilsin diye buradadir.
+__pycache__/
+.pytest_cache/
+*.pyc
+results/

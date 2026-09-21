@@ -8,6 +8,7 @@ dokunmak gerekmez.
 Birim donusumu burada yapilir: .xvg'ler ps ve nm cinsindendir (spec 2.5).
 """
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,13 +17,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
+MDKIT = Path(__file__).resolve().parent
+
 NM_TO_ANGSTROM = 10.0
 PS_TO_NS = 1e-3
 
 # dataviz skill'inin dogrulanmis paleti (categorical, slot 1/2/3 ve 1/8).
-# Sadece bu iki sabit degistirilir; kodun geri kalani ayni kalir.
+# Sadece bu sabitler degistirilir; kodun geri kalani ayni kalir.
 REP_COLORS = {"rep1": "#2a78d6", "rep2": "#eb6834", "rep3": "#1baf7a"}
-GROUP_COLORS = {"top": "#2a78d6", "last": "#e34948"}
+# Kompleks gruplarinin renkleri SIRAYLA atanir: hangi grubun var oldugu
+# config.sh'deki COMPLEX_GROUPS'a baglidir, bu dosyaya degil.
+GROUP_PALETTE = ["#2a78d6", "#e34948"]
+# Gruplar tanimli ama kompleks hicbirine uymuyorsa: notr gri. Bir kategori
+# rengi vermek onu yanlis gruba aitmis gibi gosterirdi.
+UNGROUPED_COLOR = "#8a8f98"
+# Seriler cizgi TIPIYLE ayrilir; renk replikaya ayrilmis durumda.
+SERIES_LINESTYLES = ["-", "--", ":", "-."]
 
 DEFAULT_COMPARE_OUTPUT = "rmsd_pep_on_mhc.xvg"
 
@@ -51,8 +61,51 @@ def load(results_dir):
     return ts, pr
 
 
-def _group_color(complex_name):
-    return GROUP_COLORS["top" if complex_name.startswith("top") else "last"]
+# --- kompleks gruplari: projeye ozel, config.sh'den okunur ---------------
+
+def parse_complex_groups(raw):
+    """'onek:etiket' ogelerini [(onek, etiket)] olarak cozer.
+
+    'top'/'last' ayrimi BU PROJENIN kurgusudur, aracin degil: sabit kodlu
+    oldugu surece baska bir veri setinde her kompleks 'last' rengini alir
+    ve efsane 'top*/last*' yazar."""
+    groups = []
+    for item in raw.split():
+        prefix, sep, label = item.partition(":")
+        if not sep or not prefix:
+            print(f"uyari: COMPLEX_GROUPS ogesi 'onek:etiket' bicimine "
+                  f"uymuyor, atlandi: {item!r}", file=sys.stderr)
+            continue
+        groups.append((prefix, label or prefix))
+    return groups
+
+
+def read_complex_groups(config=None):
+    """config.sh'deki COMPLEX_GROUPS; okunamazsa gruplama YOK.
+
+    Config'i bash tarafindaki dogrulayiciyla okur (collect_results.py ile
+    ayni tek kaynak). Sonuc CSV'leri baska bir makineye tasinip config'siz
+    cizdirilebildigi icin basarisizlik olumcul degildir."""
+    arg = f'"{config}"' if config else ""
+    r = subprocess.run(
+        ["bash", "-c",
+         f'source "{MDKIT}/analysis/lib.sh" && mdkit_load_config {arg} '
+         f'>/dev/null 2>&1 && printf "%s" "${{COMPLEX_GROUPS[*]:-}}"'],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return []
+    return parse_complex_groups(r.stdout)
+
+
+def group_color(complex_name, groups):
+    """Kompleksin rengi. groups bossa tek renk: gruplama yapilandirilmamis."""
+    if not groups:
+        return GROUP_PALETTE[0]
+    for i, (prefix, _label) in enumerate(groups):
+        if complex_name.startswith(prefix):
+            return GROUP_PALETTE[i % len(GROUP_PALETTE)]
+    return UNGROUPED_COLOR
 
 
 def _panels(ts, pr):
@@ -63,7 +116,50 @@ def _panels(ts, pr):
         yield pr, "residue", "Residue", 1.0
 
 
-def plot_per_complex(ts, pr, out_dir):
+# --- seri ayrimi ---------------------------------------------------------
+
+def line_specs(g, xcol):
+    """Bir (kompleks, cikti) panelinde cizilecek cizgiler.
+
+    Her (replika, SERI) icin bir cizgi: renk replikayi, cizgi tipi seriyi
+    kodlar. Seriyi yok sayip yalnizca replikaya gore gruplamak cok serili
+    bir ciktida (gmx gyrate: Rg/RgX/RgY/RgZ) tum serileri tek bir zikzak
+    cizgide birlestirirdi. Tek serili ciktida davranis degismez: duz cizgi,
+    etiket = replika adi."""
+    series_names = sorted(g["series"].astype(str).unique())
+    style = {s: SERIES_LINESTYLES[i % len(SERIES_LINESTYLES)]
+             for i, s in enumerate(series_names)}
+    specs = []
+    for (rep, series), gr in g.groupby(["replica", "series"], sort=True):
+        gr = gr.sort_values(xcol)
+        specs.append({
+            "replica": str(rep),
+            "series": str(series),
+            "label": str(rep) if len(series_names) == 1
+                     else f"{rep} · {series}",
+            "color": REP_COLORS.get(rep),
+            "linestyle": style[str(series)],
+            "x": gr[xcol].to_numpy(),
+            "y": gr["value"].to_numpy(),
+        })
+    return specs
+
+
+def series_stats(g, xcol):
+    """(seri, mean/std tablosu) ciftleri -- SD her serinin ICINDE hesaplanir.
+
+    Serileri havuzlamak, farkli fiziksel buyukluklerin (Rg ile RgX) arasindaki
+    yayilimi replika degiskenligi gibi gosteren, yayin gorunumlu ama anlamsiz
+    bir band uretir."""
+    for series, gs in g.groupby("series", sort=True):
+        stats = (gs.groupby(xcol)["value"]
+                   .agg(["mean", "std"])
+                   .sort_index()
+                   .fillna(0.0))
+        yield str(series), stats
+
+
+def plot_per_complex(ts, pr, out_dir, groups=()):
     """Kompleks basina bir figure; rep1/rep2/rep3 ust uste. Yakinsama denetimi."""
     target = out_dir / "per_complex"
     target.mkdir(parents=True, exist_ok=True)
@@ -76,10 +172,10 @@ def plot_per_complex(ts, pr, out_dir):
                 if unit != "nm":
                     _warn_unknown_unit(output, unit)
                 fig, ax = plt.subplots(figsize=(7, 4))
-                for rep, gr in g.groupby("replica", sort=True):
-                    gr = gr.sort_values(xcol)
-                    ax.plot(gr[xcol] * xconv, gr["value"] * yconv,
-                            label=rep, color=REP_COLORS.get(rep), linewidth=1.0)
+                for spec in line_specs(g, xcol):
+                    ax.plot(spec["x"] * xconv, spec["y"] * yconv,
+                            label=spec["label"], color=spec["color"],
+                            linestyle=spec["linestyle"], linewidth=1.0)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 ax.set_title(f"{cx} — {Path(output).stem}")
@@ -95,7 +191,7 @@ def plot_per_complex(ts, pr, out_dir):
                     plt.close(fig)
 
 
-def plot_mean_sd(ts, pr, out_dir):
+def plot_mean_sd(ts, pr, out_dir, groups=()):
     """Replika ortalamasi + ±SD seridi. Yayina/teze giden temiz figure."""
     target = out_dir / "mean_sd"
     target.mkdir(parents=True, exist_ok=True)
@@ -107,22 +203,24 @@ def plot_mean_sd(ts, pr, out_dir):
                 yconv, ylabel = scale_and_label(unit)
                 if unit != "nm":
                     _warn_unknown_unit(output, unit)
-                stats = (g.groupby(xcol)["value"]
-                           .agg(["mean", "std"])
-                           .sort_index()
-                           .fillna(0.0))
-                x = stats.index.to_numpy() * xconv
-                mean = stats["mean"].to_numpy() * yconv
-                sd = stats["std"].to_numpy() * yconv
-                color = _group_color(cx)
+                color = group_color(cx, groups)
 
                 fig, ax = plt.subplots(figsize=(7, 4))
-                ax.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.25,
-                                linewidth=0)
-                ax.plot(x, mean, color=color, linewidth=1.4)
+                bands = list(series_stats(g, xcol))
+                for i, (series, stats) in enumerate(bands):
+                    x = stats.index.to_numpy() * xconv
+                    mean = stats["mean"].to_numpy() * yconv
+                    sd = stats["std"].to_numpy() * yconv
+                    ls = SERIES_LINESTYLES[i % len(SERIES_LINESTYLES)]
+                    ax.fill_between(x, mean - sd, mean + sd, color=color,
+                                    alpha=0.25, linewidth=0)
+                    ax.plot(x, mean, color=color, linewidth=1.4, linestyle=ls,
+                            label=series)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 ax.set_title(f"{cx} — {Path(output).stem} (n={g['replica'].nunique()} replika)")
+                if len(bands) > 1:
+                    ax.legend(frameon=False)
                 ax.spines[["top", "right"]].set_visible(False)
                 fig.tight_layout()
                 fig.savefig(target / f"{cx}_{Path(output).stem}.png", dpi=150)
@@ -143,7 +241,7 @@ def compare_order(per_rep):
                    .tolist())
 
 
-def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT):
+def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT, groups=()):
     """Tum kompleksler tek panelde, medyana gore sirali boxplot."""
     if ts.empty:
         return
@@ -163,7 +261,7 @@ def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT):
     fig, ax = plt.subplots(figsize=(max(8.0, len(order) * 0.35), 4.5))
     bp = ax.boxplot(data, patch_artist=True, widths=0.6)
     for patch, cx in zip(bp["boxes"], order):
-        patch.set_facecolor(_group_color(cx))
+        patch.set_facecolor(group_color(cx, groups))
         patch.set_alpha(0.75)
         patch.set_edgecolor("#333333")
     for median in bp["medians"]:
@@ -174,9 +272,16 @@ def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT):
     ax.set_ylabel(f"Ortalama {Path(output).stem} ({ylabel})")
     ax.set_title("Kompleksler arasi karsilastirma (replika basina ortalama)")
     ax.spines[["top", "right"]].set_visible(False)
-    handles = [plt.Line2D([], [], color=c, linewidth=6, alpha=0.75)
-               for c in (GROUP_COLORS["top"], GROUP_COLORS["last"])]
-    ax.legend(handles, ["top*", "last*"], frameon=False, loc="upper left")
+    # Gruplama yapilandirilmamissa efsane de YOK: uydurma bir 'top*/last*'
+    # efsanesi baska bir veri setinde duz yalan olurdu.
+    if groups:
+        handles = [
+            plt.Line2D([], [], linewidth=6, alpha=0.75,
+                       color=GROUP_PALETTE[i % len(GROUP_PALETTE)])
+            for i in range(len(groups))
+        ]
+        ax.legend(handles, [label for _p, label in groups],
+                  frameon=False, loc="upper left")
     fig.tight_layout()
     fig.savefig(out_dir / f"compare_{Path(output).stem}.png", dpi=150)
     plt.close(fig)
@@ -185,6 +290,8 @@ def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT):
 def main():
     ap = argparse.ArgumentParser(description="mdkit cizim katmani")
     ap.add_argument("--results-dir", type=Path, required=True)
+    ap.add_argument("-c", "--config", type=Path, default=None,
+                    help="config.sh (COMPLEX_GROUPS icin; varsayilan: mdkit/config.sh)")
     ap.add_argument("--per-complex", action="store_true")
     ap.add_argument("--mean-sd", action="store_true")
     ap.add_argument("--compare", action="store_true")
@@ -192,16 +299,17 @@ def main():
     args = ap.parse_args()
 
     ts, pr = load(args.results_dir)
+    groups = read_complex_groups(args.config)
     out_dir = args.results_dir / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_all = not (args.per_complex or args.mean_sd or args.compare)
     if args.per_complex or run_all:
-        plot_per_complex(ts, pr, out_dir)
+        plot_per_complex(ts, pr, out_dir, groups)
     if args.mean_sd or run_all:
-        plot_mean_sd(ts, pr, out_dir)
+        plot_mean_sd(ts, pr, out_dir, groups)
     if args.compare or run_all:
-        plot_compare(ts, out_dir, args.compare_output)
+        plot_compare(ts, out_dir, args.compare_output, groups)
 
     print(f"grafikler -> {out_dir}")
 

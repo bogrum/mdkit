@@ -88,15 +88,22 @@ def read_manifest(config):
     for line in r.stdout.splitlines():
         if not line.strip():
             continue
-        name, kind, _desc, outputs = line.split("\t")
-        for out in outputs.split(","):
-            manifest[out.strip()] = (name, kind)
+        # Ilk dort alan sabit; 5. alan (opsiyonel ciktilar) sonradan eklendi
+        # ve zaten 4. alanin bir alt kumesidir -- eski bir --list ciktisiyla
+        # da calissin diye varligi zorunlu tutulmaz.
+        parts = line.split("\t")
+        name, kind, _desc, outputs = parts[:4]
+        optional = parts[4] if len(parts) > 4 else ""
+        for out in outputs.split(",") + optional.split(","):
+            if out.strip():
+                manifest[out.strip()] = (name, kind)
     return manifest
 
 
 def collect(data_root, complex_glob, reps, manifest):
     timeseries, profile = [], []
     warned = set()
+    warned_unlisted = set()
     for cx in sorted(data_root.glob(complex_glob)):
         if not cx.is_dir():
             continue
@@ -108,6 +115,17 @@ def collect(data_root, complex_glob, reps, manifest):
             for xvg in sorted(adir.glob("*.xvg")):
                 entry = manifest.get(xvg.name)
                 if entry is None:
+                    # Sessiz atlama, manifesto ile disk arasindaki her
+                    # uyusmazligi gorunmez kiliyordu: bir eklenti ciktisini
+                    # kosullu ilan ettiginde saatler suren hesaplar hicbir
+                    # CSV'ye girmeden kayboluyordu. Dosya adi basina bir satir.
+                    if xvg.name not in warned_unlisted:
+                        warned_unlisted.add(xvg.name)
+                        print(
+                            f"mdkit: manifestoda olmayan .xvg atlandi: "
+                            f"{xvg.name} (ilk gorulen: {adir})",
+                            file=sys.stderr,
+                        )
                     continue
                 analysis, kind = entry
                 if kind not in ("timeseries", "profile"):

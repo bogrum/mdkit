@@ -29,6 +29,8 @@ def test_hedefsiz_cagri_hata(mdkit, fake_config):
 
 
 def test_list_tsv_uretir(mdkit, fake_config):
+    """Ilk DORT alan konumunu ve anlamini korur (makine okunur manifesto);
+    5. alan opsiyonel ciktilari tasir ve 4. alanin alt kumesidir."""
     r = run_cli(mdkit, "--config", str(fake_config), "--list")
     assert r.returncode == 0, r.stderr
     lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
@@ -36,13 +38,28 @@ def test_list_tsv_uretir(mdkit, fake_config):
     names = set()
     for ln in lines:
         parts = ln.split("\t")
-        assert len(parts) == 4, f"4 alan bekleniyordu: {ln!r}"
-        name, kind, desc, outputs = parts
+        assert len(parts) == 5, f"5 alan bekleniyordu: {ln!r}"
+        name, kind, desc, outputs, optional = parts
         assert kind in {"timeseries", "profile", "matrix"}
         assert desc.strip()
         assert outputs.strip()
+        opt = {o for o in optional.split(",") if o}
+        assert opt <= {o for o in outputs.split(",") if o}, ln
         names.add(name)
     assert {"rmsd", "rmsf"} <= names
+
+
+def test_list_opsiyonel_ciktilari_bes_alanda_bildirir(mdkit, fake_config):
+    """--list TAZE bir kabukta kosar, yani --groove-fit gormez. Ucuncu rmsf
+    ciktisi yine de 4. alanda ILAN edilmeli (yoksa collect_results.py diskteki
+    dosyayi manifestoda bulamaz ve sessizce atlar) ve 5. alanda opsiyonel
+    olarak isaretlenmeli (yoksa idempotency kontrolu onu arar)."""
+    r = run_cli(mdkit, "--config", str(fake_config), "--list")
+    assert r.returncode == 0, r.stderr
+    row = [ln for ln in r.stdout.splitlines() if ln.startswith("rmsf\t")][0]
+    _name, _kind, _desc, outputs, optional = row.split("\t")
+    assert "rmsf_pep_groovefit.xvg" in outputs.split(",")
+    assert optional.split(",") == ["rmsf_pep_groovefit.xvg"]
 
 
 def test_bilinmeyen_analiz_adi_hata(mdkit, fake_config, fake_dataset):
@@ -128,7 +145,10 @@ def test_iki_pozisyonel_hedef_hata(mdkit, fake_config, fake_dataset, tmp_path):
 
 
 def test_bozuk_plugin_list_basarisiz_olur(mdkit, fake_config):
-    plugin = mdkit / "analysis" / "_zz_test_bozuk_plugin.sh"
+    # Alt cizgi ONEKI YOK: mdkit_analysis_scripts artik '_' ile baslayan
+    # dosyalari kesiften duser, oysa bu testin amaci kesfedilen bozuk bir
+    # eklentinin --list'i dusurmesini dogrulamak.
+    plugin = mdkit / "analysis" / "zz_test_bozuk_plugin.sh"
     plugin.write_text(
         "#!/usr/bin/env bash\n"
         'ANALYSIS_NAME="bozuk"\n'
@@ -141,6 +161,21 @@ def test_bozuk_plugin_list_basarisiz_olur(mdkit, fake_config):
     try:
         r = run_cli(mdkit, "--config", str(fake_config), "--list", timeout=10)
         assert r.returncode != 0
-        assert "_zz_test_bozuk_plugin.sh" in r.stderr
+        assert "zz_test_bozuk_plugin.sh" in r.stderr
     finally:
         plugin.unlink()
+
+
+def test_full_postmd_postmd_script_yoksa_hicbir_is_yapmadan_durur(
+    mdkit, fake_config, fake_dataset, tmp_path
+):
+    """POSTMD_SCRIPT dogrulamasi eksik-referans dongusunun ICINDE duruyordu:
+    hata ancak log dosyasi olusturulduktan ve ilk replikaya gelindikten sonra
+    veriliyordu. Dogrulama tum isten ONCE yapilmali."""
+    cx = fake_dataset / "last1_AAA_A0201_pandora"
+    (cx / "rep1" / "check_ref.pdb").unlink()     # missing_refs bos olmasin
+    r = run_cli(mdkit, "-c", str(fake_config), "-y", "--full-postmd",
+                "-a", "rmsd", str(cx), timeout=30)
+    assert r.returncode == 2
+    assert "POSTMD_SCRIPT" in r.stderr
+    assert not (tmp_path / "results" / "run_log.csv").exists(), r.stdout

@@ -92,7 +92,7 @@ def test_groove_fit_idempotency_ucuncu_ciktiyi_da_sayar(mdkit, real_config, tmp_
             "--groove-fit", target)
     out = tmp_path / "data" / "test1_PEPTIDE_A0201_pandora" / "rep1" / "analysis"
     assert (out / "rmsf_pep_groovefit.xvg").exists()
-    rows = list(csv.DictReader((tmp_path / "results" / "run_log.csv").open()))
+    rows = list(csv.DictReader((tmp_path / "results" / "run_log.csv").read_text().splitlines()))
     assert rows[-1]["status"] == "OK"
 
 
@@ -119,3 +119,20 @@ def test_force_traj_fit_de_yeniden_kurar(mdkit, real_config, tmp_path):
                  "--groove-fit", "--force", target)
     assert fitted.read_bytes() != garbage, r2.stderr
     assert (rep / "analysis" / "rmsf_pep_groovefit.xvg").exists(), r2.stderr
+
+
+@needs_gmx
+def test_groove_fitsiz_ikinci_kosu_skip_done_olur(mdkit, real_config, tmp_path):
+    """rmsf_pep_groovefit.xvg artik KOSULSUZ ilan ediliyor (manifesto icin).
+    --groove-fit verilmediginde idempotency kontrolu onu ARAMAMALI, yoksa
+    her kosuda iki profil bastan hesaplanir ve SKIP_DONE hic gorulmez."""
+    import csv
+    target = str(tmp_path / "data" / "test1_PEPTIDE_A0201_pandora")
+    args = ["-c", str(real_config), "-y", "-a", "rmsf", "-b", "0", target]
+    run_cli(mdkit, *args)
+    run_cli(mdkit, *args)
+    rows = list(csv.DictReader(
+        (tmp_path / "results" / "run_log.csv").read_text().splitlines()))
+    assert [r["status"] for r in rows] == ["OK", "SKIP_DONE"], rows
+    out = tmp_path / "data" / "test1_PEPTIDE_A0201_pandora" / "rep1" / "analysis"
+    assert not (out / "rmsf_pep_groovefit.xvg").exists()

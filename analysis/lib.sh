@@ -158,22 +158,32 @@ mdkit_group_size() {
     ' "$1"
 }
 
+# run_log.csv semasi. begin_ps KOLONU ONEMLI: ayni replika farkli -b ile
+# yeniden kosuldugunda hangi equilibration kesiminin hangi sayilari urettigini
+# baska hicbir sey kaydetmez; birlesik bir CSV'de karisirlar.
+MDKIT_LOG_HEADER="timestamp,complex,replica,analysis,status,seconds,begin_ps,error"
+
 mdkit_log_init() {
     mkdir -p "$RESULTS_DIR" || return 1
     MDKIT_LOG="$RESULTS_DIR/run_log.csv"
     if [[ ! -s "$MDKIT_LOG" ]]; then
-        echo "timestamp,complex,replica,analysis,status,seconds,error" > "$MDKIT_LOG"
+        echo "$MDKIT_LOG_HEADER" > "$MDKIT_LOG"
+    elif [[ "$(head -1 "$MDKIT_LOG")" != "$MDKIT_LOG_HEADER" ]]; then
+        # Eski semali bir loga yeni semali satir eklemek sessiz bir veri
+        # karisimidir; ustune yazmiyoruz ama sessiz de kalmiyoruz.
+        echo "mdkit: $MDKIT_LOG eski basliga sahip; yeni satirlar $MDKIT_LOG_HEADER semasinda eklenecek" >&2
     fi
     return 0
 }
 
 mdkit_log_row() {
-    # $1=complex $2=replica $3=analysis $4=status $5=seconds $6=error(opsiyonel)
-    local err="${6:-}"
+    # $1=complex $2=replica $3=analysis $4=status $5=seconds
+    # $6=begin_ps(opsiyonel) $7=error(opsiyonel)
+    local err="${7:-}"
     err="${err//\"/\"\"}"      # standart CSV kacisi: tirnagi ikile
     err="${err//$'\n'/ }"      # yeni satiri bosluga cevir
-    printf '%s,%s,%s,%s,%s,%s,"%s"\n' \
-        "$(date -Iseconds)" "$1" "$2" "$3" "$4" "$5" "$err" >> "$MDKIT_LOG"
+    printf '%s,%s,%s,%s,%s,%s,%s,"%s"\n' \
+        "$(date -Iseconds)" "$1" "$2" "$3" "$4" "$5" "${6:--}" "$err" >> "$MDKIT_LOG"
 }
 
 mdkit_outputs_present() {
@@ -186,12 +196,30 @@ mdkit_outputs_present() {
     return 0
 }
 
+mdkit_mandatory_outputs() {
+    # ANALYSIS_OUTPUTS eksi ANALYSIS_OPTIONAL_OUTPUTS -- her satirda bir ad.
+    # Eklenti TUM ciktilarini kosulsuz ILAN eder (manifesto eksiksiz olsun
+    # diye); bir ciktinin URETILMESI opsiyonelse idempotency kontrolu onu
+    # aramamalidir, yoksa hic kosulmayan bir analiz sonsuza dek yeniden kosar.
+    local o p opt
+    for o in ${ANALYSIS_OUTPUTS[@]+"${ANALYSIS_OUTPUTS[@]}"}; do
+        opt=0
+        for p in ${ANALYSIS_OPTIONAL_OUTPUTS[@]+"${ANALYSIS_OPTIONAL_OUTPUTS[@]}"}; do
+            [[ "$o" == "$p" ]] && { opt=1; break; }
+        done
+        [[ "$opt" == 1 ]] || printf '%s\n' "$o"
+    done
+}
+
 mdkit_run_isolated() {
     # $1 = analiz scripti, $2 = rep_dir, $3 = out_dir
     # analysis_run alt kabukta kosar; hata ana donguyu dusurmez.
+    # 2>&1 BILESIK komuta baglanir: aksi halde source'un kendi hatasi
+    # (ör. sozdizimi hatasi) yakalanmaz, terminale sizar ve HATA satirinin
+    # error kolonu bos kalir.
     local out
     MDKIT_LAST_ERROR=""
-    if out="$( source "$1" && analysis_run "$2" "$3" 2>&1 )"; then
+    if out="$( { source "$1" && analysis_run "$2" "$3"; } 2>&1 )"; then
         return 0
     fi
     MDKIT_LAST_ERROR="$(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
@@ -199,21 +227,61 @@ mdkit_run_isolated() {
 }
 
 mdkit_analysis_scripts() {
-    local f
+    # Alt cizgiyle baslayan dosyalar ATLANIR: yarida kesilmis bir testin
+    # geride biraktigi stub, varsayilan (tum analizler) kosusunda gercek bir
+    # analiz gibi calistirilamasin. Boyle bir dosya yine de "-a _ad" ile
+    # acikca secilebilir.
+    local f b
     for f in "$MDKIT_DIR/analysis"/*.sh; do
         [[ -f "$f" ]] || continue
-        [[ "$(basename "$f")" == "lib.sh" ]] && continue
+        b="$(basename "$f")"
+        [[ "$b" == "lib.sh" ]] && continue
+        [[ "$b" == _* ]] && continue
         printf '%s\n' "$f"
     done
 }
 
+mdkit_validate_plugin() {
+    # $1 = eklenti dosyasi. source EDILDIKTEN SONRA cagrilir ve sozlesmenin
+    # tamaminin BU kabukta tanimli oldugunu dogrular. Gerekli: ana dongu
+    # eklentileri ana kabuga source eder, yani eksik bir metadata ya
+    # scripti dusurur (set -u) ya da bir ONCEKI eklentinin degerini miras
+    # alir -- ikincisinde A'nin analizi B'nin adiyla loglanir.
+    local script="$1" missing=() v
+    for v in ANALYSIS_NAME ANALYSIS_KIND ANALYSIS_DESC ANALYSIS_DEFAULT_BEGIN; do
+        [[ -n "${!v:-}" ]] || missing+=("$v")
+    done
+    if [[ -z "${ANALYSIS_OUTPUTS+x}" ]] || [[ ${#ANALYSIS_OUTPUTS[@]} -eq 0 ]]; then
+        missing+=("ANALYSIS_OUTPUTS")
+    fi
+    declare -F analysis_run >/dev/null || missing+=("analysis_run")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        MDKIT_LAST_ERROR="eklenti sozlesmesi eksik ($(basename "$script")): ${missing[*]}"
+        return 1
+    fi
+    return 0
+}
+
+mdkit_clear_plugin() {
+    # Sozlesmeyi sifirla. Her source'tan ONCE cagrilir.
+    unset ANALYSIS_NAME ANALYSIS_DESC ANALYSIS_KIND ANALYSIS_NEEDS_INDEX \
+          ANALYSIS_DEFAULT_BEGIN ANALYSIS_OUTPUTS ANALYSIS_OPTIONAL_OUTPUTS
+    unset -f analysis_run
+    return 0
+}
+
 mdkit_analysis_meta() {
-    # $1 = analiz scripti -> name<TAB>kind<TAB>desc<TAB>output1,output2
+    # $1 = analiz scripti
+    #   -> name<TAB>kind<TAB>desc<TAB>zorunlu+opsiyonel ciktilar<TAB>opsiyonel ciktilar
+    # Ilk DORT alan konumunu ve anlamini korur (makine okunur manifesto).
+    # 4. alan TUM ciktilari listeler; 5. alan bunlarin hangilerinin
+    # opsiyonel (kosula bagli uretilen) oldugunu soyler.
     # Alt kabukta source edilir; degiskenler ana kabuga sizmaz.
     (
         source "$1" || exit 1
         local IFS=,
-        printf '%s\t%s\t%s\t%s\n' \
-            "$ANALYSIS_NAME" "$ANALYSIS_KIND" "$ANALYSIS_DESC" "${ANALYSIS_OUTPUTS[*]}"
+        printf '%s\t%s\t%s\t%s\t%s\n' \
+            "$ANALYSIS_NAME" "$ANALYSIS_KIND" "$ANALYSIS_DESC" \
+            "${ANALYSIS_OUTPUTS[*]}" "${ANALYSIS_OPTIONAL_OUTPUTS[*]:-}"
     )
 }

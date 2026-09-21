@@ -26,3 +26,9 @@ CHAIN_LIGAND="C"     # peptid
 # Opsiyonel: --full-postmd icin tam post-MD scripti. Bos birakilirsa
 # --full-postmd hata verir ve yalnizca hizli yol (-dump 0) kullanilabilir.
 POSTMD_SCRIPT="/home/emre/workspace/TUSEB-Bitirme/scratch/mdsimulations/system_prep/post_md_script.sh"
+
+# Cizim katmaninda kompleksleri renklendirmek/gruplamak icin "onek:etiket"
+# listesi. "top"/"last" ayrimi BU projenin kurgusudur, aracin degil.
+# Bos birakilirsa (COMPLEX_GROUPS=()) karsilastirma paneli tek renkte ve
+# grup efsanesi olmadan cizilir. Onek ve etiket bosluk icermemelidir.
+COMPLEX_GROUPS=("top:top*" "last:last*")

@@ -1,0 +1,7 @@
+# mdkit Python katmani (collect_results.py, plot_results.py) ve testleri.
+# Surum sabitlenmedi: arac yalnizca uzun sureli, kararli API'leri kullanir.
+# GROMACS bir Python paketi degildir; ayrica kurulmali (2025.4 ile test edildi).
+numpy
+pandas
+matplotlib
+pytest

@@ -91,8 +91,8 @@ def test_timeseries_ve_profile_ayri_dosyalara_gider(mdkit, fake_config, fake_dat
     r = run_collect(mdkit, fake_config)
     assert r.returncode == 0, r.stderr
 
-    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").open()))
-    pr = list(csv.DictReader((tmp_path / "results" / "profile_long.csv").open()))
+    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()))
+    pr = list(csv.DictReader((tmp_path / "results" / "profile_long.csv").read_text().splitlines()))
     assert len(ts) == 2 * 3 * 3   # 2 kompleks x 3 replika x 3 satir
     assert len(pr) == 2 * 3 * 2
     assert ts[0]["analysis"] == "rmsd"
@@ -107,7 +107,7 @@ def test_ham_deger_korunur_donusturulmez(mdkit, fake_config, fake_dataset, tmp_p
     korlemesine carpma sessizce yanlis olurdu."""
     write_outputs(fake_dataset, {"rmsd_pep_on_mhc.xvg": TIMESERIES_XVG})
     run_collect(mdkit, fake_config)
-    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").open()))
+    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()))
     assert float(ts[1]["value"]) == pytest.approx(0.1457492)
 
 
@@ -117,14 +117,14 @@ def test_manifestte_olmayan_xvg_yok_sayilir(mdkit, fake_config, fake_dataset, tm
         "elle_yazilmis_baska.xvg": TIMESERIES_XVG,
     })
     run_collect(mdkit, fake_config)
-    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").open()))
+    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()))
     assert {row["output"] for row in ts} == {"rmsd_pep_on_mhc.xvg"}
 
 
 def test_cok_serili_xvg_her_seriyi_ayri_satira_yazar(mdkit, fake_config, fake_dataset, tmp_path):
     write_outputs(fake_dataset, {"rmsd_pep_on_mhc.xvg": MULTI_SERIES_XVG})
     run_collect(mdkit, fake_config)
-    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").open()))
+    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()))
     series = {row["series"] for row in ts}
     assert series == {"birinci", "ikinci"}
     assert len(ts) == 2 * 3 * 2 * 2   # kompleks x replika x satir x seri
@@ -139,7 +139,7 @@ def test_bilinmeyen_kind_uyarilir_ve_csvye_girmez(mdkit, fake_config, fake_datas
     Gecici bir 'matrix' eklentisi kullanilir ki test gercek --list yolunu
     (run_analysis.sh --list -> collect_results.read_manifest) egzersiz
     etsin, sahte/stub bir manifest degil."""
-    plugin = mdkit / "analysis" / "_zz_test_matrix_kind.sh"
+    plugin = mdkit / "analysis" / "zz_test_matrix_kind.sh"
     plugin.write_text(textwrap.dedent("""\
         ANALYSIS_NAME="zzmatrix"
         ANALYSIS_DESC="test icin (matrix kind, henuz desteklenmiyor)"
@@ -158,8 +158,8 @@ def test_bilinmeyen_kind_uyarilir_ve_csvye_girmez(mdkit, fake_config, fake_datas
         assert len(warnings) == 1, r.stderr
         assert "matrix" in warnings[0]
 
-        ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").open()))
-        pr = list(csv.DictReader((tmp_path / "results" / "profile_long.csv").open()))
+        ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()))
+        pr = list(csv.DictReader((tmp_path / "results" / "profile_long.csv").read_text().splitlines()))
         assert "matrix_test.xvg" not in {row["output"] for row in ts}
         assert "matrix_test.xvg" not in {row["output"] for row in pr}
     finally:
@@ -172,3 +172,48 @@ def test_bos_veri_seti_sadece_baslik_yazar(mdkit, fake_config, tmp_path):
     lines = (tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()
     assert len(lines) == 1
     assert lines[0].startswith("complex,replica,analysis,output,series,time_ps")
+
+
+# --- Fix 1: kosullu ilan edilen ciktilar ve sessiz atlamalar --------------
+
+def test_groove_fit_ciktisi_manifestoda_ve_csvde_yer_alir(
+    mdkit, fake_config, fake_dataset, tmp_path
+):
+    """rmsf_pep_groovefit.xvg diskte varsa CSV'ye GIRMELI.
+
+    Manifesto `run_analysis.sh --list` ile TAZE bir kabukta okunur; o kabuk
+    --groove-fit gormez. Ucuncu cikti kosullu ILAN edildigi surece manifestoya
+    hic girmiyor, collect() de `entry is None` dalinda dosyayi sessizce
+    atliyordu: saatler suren ve ~24 GB ara dosya ureten bir kosunun 105
+    .xvg'sinin tamami hicbir CSV'ye ve hicbir figure'e girmiyordu."""
+    write_outputs(fake_dataset, {"rmsf_pep_groovefit.xvg": PROFILE_XVG})
+    r = run_collect(mdkit, fake_config)
+    assert r.returncode == 0, r.stderr
+
+    pr = list(csv.DictReader((tmp_path / "results" / "profile_long.csv").read_text().splitlines()))
+    groove = [row for row in pr if row["output"] == "rmsf_pep_groovefit.xvg"]
+    assert len(groove) == 2 * 3 * 2          # kompleks x replika x residue
+    assert {row["analysis"] for row in groove} == {"rmsf"}
+    assert "rmsf_pep_groovefit.xvg" not in r.stderr   # manifestoda, uyari yok
+
+
+def test_manifestte_olmayan_xvg_tek_satirlik_uyari_uretir(
+    mdkit, fake_config, fake_dataset, tmp_path
+):
+    """Manifestoda olmayan bir .xvg atlanmaya devam eder ama artik SESSIZ
+    degil: dosya adi basina TEK bir stderr satiri. fake_dataset 2 kompleks x
+    3 replikadir, yani dosya 6 kez gorulur; dedup bunu teke indirmeli.
+    Bu uyari, groove-fit hatasini kosmadan once yakalayacak olan uyaridir."""
+    write_outputs(fake_dataset, {
+        "rmsd_pep_on_mhc.xvg": TIMESERIES_XVG,
+        "elle_yazilmis_baska.xvg": TIMESERIES_XVG,
+    })
+    r = run_collect(mdkit, fake_config)
+    assert r.returncode == 0, r.stderr
+
+    warnings = [ln for ln in r.stderr.splitlines()
+                if "elle_yazilmis_baska.xvg" in ln]
+    assert len(warnings) == 1, r.stderr
+
+    ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()))
+    assert {row["output"] for row in ts} == {"rmsd_pep_on_mhc.xvg"}

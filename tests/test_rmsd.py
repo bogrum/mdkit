@@ -2,7 +2,7 @@ import subprocess
 
 from conftest import needs_gmx
 
-OUTPUTS = ["rmsd_pep_on_mhc.xvg", "rmsd_pep_internal.xvg", "rmsd_mhc_bb.xvg"]
+OUTPUTS = ["rmsd_pep_on_mhc.xvg", "rmsd_pep_internal.xvg", "rmsd_complex_bb.xvg"]
 
 
 def run_cli(mdkit, *args):
