@@ -27,6 +27,20 @@ GROUP_COLORS = {"top": "#2a78d6", "last": "#e34948"}
 DEFAULT_COMPARE_OUTPUT = "rmsd_pep_on_mhc.xvg"
 
 
+def scale_and_label(unit):
+    """(carpan, eksen etiketi). Yalnizca nm cevrilir; bilinmeyen birim
+    cevrilmeden, kendi etiketiyle cizilir -- bilmedigimiz bir birimi
+    cevirmis gibi yapmiyoruz."""
+    if unit == "nm":
+        return NM_TO_ANGSTROM, "Å"
+    return 1.0, unit or "birimsiz"
+
+
+def _warn_unknown_unit(output, unit):
+    print(f"uyari: {output} icin bilinmeyen birim '{unit}' - "
+          "donusum uygulanmadi, oldugu gibi cizildi", file=sys.stderr)
+
+
 def load(results_dir):
     ts_path = results_dir / "timeseries_long.csv"
     pr_path = results_dir / "profile_long.csv"
@@ -55,19 +69,30 @@ def plot_per_complex(ts, pr, out_dir):
     target.mkdir(parents=True, exist_ok=True)
     for df, xcol, xlabel, xconv in _panels(ts, pr):
         for (cx, output), g in df.groupby(["complex", "output"], sort=True):
-            fig, ax = plt.subplots(figsize=(7, 4))
-            for rep, gr in g.groupby("replica", sort=True):
-                gr = gr.sort_values(xcol)
-                ax.plot(gr[xcol] * xconv, gr["value"] * NM_TO_ANGSTROM,
-                        label=rep, color=REP_COLORS.get(rep), linewidth=1.0)
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel("Å")
-            ax.set_title(f"{cx} — {Path(output).stem}")
-            ax.legend(frameon=False)
-            ax.spines[["top", "right"]].set_visible(False)
-            fig.tight_layout()
-            fig.savefig(target / f"{cx}_{Path(output).stem}.png", dpi=150)
-            plt.close(fig)
+            fig = None
+            try:
+                unit = g["unit"].iloc[0]
+                yconv, ylabel = scale_and_label(unit)
+                if unit != "nm":
+                    _warn_unknown_unit(output, unit)
+                fig, ax = plt.subplots(figsize=(7, 4))
+                for rep, gr in g.groupby("replica", sort=True):
+                    gr = gr.sort_values(xcol)
+                    ax.plot(gr[xcol] * xconv, gr["value"] * yconv,
+                            label=rep, color=REP_COLORS.get(rep), linewidth=1.0)
+                ax.set_xlabel(xlabel)
+                ax.set_ylabel(ylabel)
+                ax.set_title(f"{cx} — {Path(output).stem}")
+                ax.legend(frameon=False)
+                ax.spines[["top", "right"]].set_visible(False)
+                fig.tight_layout()
+                fig.savefig(target / f"{cx}_{Path(output).stem}.png", dpi=150)
+            except Exception as exc:
+                print(f"per-complex cizimi basarisiz ({cx}, {output}): {exc}",
+                      file=sys.stderr)
+            finally:
+                if fig is not None:
+                    plt.close(fig)
 
 
 def plot_mean_sd(ts, pr, out_dir):
@@ -76,26 +101,37 @@ def plot_mean_sd(ts, pr, out_dir):
     target.mkdir(parents=True, exist_ok=True)
     for df, xcol, xlabel, xconv in _panels(ts, pr):
         for (cx, output), g in df.groupby(["complex", "output"], sort=True):
-            stats = (g.groupby(xcol)["value"]
-                       .agg(["mean", "std"])
-                       .sort_index()
-                       .fillna(0.0))
-            x = stats.index.to_numpy() * xconv
-            mean = stats["mean"].to_numpy() * NM_TO_ANGSTROM
-            sd = stats["std"].to_numpy() * NM_TO_ANGSTROM
-            color = _group_color(cx)
+            fig = None
+            try:
+                unit = g["unit"].iloc[0]
+                yconv, ylabel = scale_and_label(unit)
+                if unit != "nm":
+                    _warn_unknown_unit(output, unit)
+                stats = (g.groupby(xcol)["value"]
+                           .agg(["mean", "std"])
+                           .sort_index()
+                           .fillna(0.0))
+                x = stats.index.to_numpy() * xconv
+                mean = stats["mean"].to_numpy() * yconv
+                sd = stats["std"].to_numpy() * yconv
+                color = _group_color(cx)
 
-            fig, ax = plt.subplots(figsize=(7, 4))
-            ax.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.25,
-                            linewidth=0)
-            ax.plot(x, mean, color=color, linewidth=1.4)
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel("Å")
-            ax.set_title(f"{cx} — {Path(output).stem} (n={g['replica'].nunique()} replika)")
-            ax.spines[["top", "right"]].set_visible(False)
-            fig.tight_layout()
-            fig.savefig(target / f"{cx}_{Path(output).stem}.png", dpi=150)
-            plt.close(fig)
+                fig, ax = plt.subplots(figsize=(7, 4))
+                ax.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.25,
+                                linewidth=0)
+                ax.plot(x, mean, color=color, linewidth=1.4)
+                ax.set_xlabel(xlabel)
+                ax.set_ylabel(ylabel)
+                ax.set_title(f"{cx} — {Path(output).stem} (n={g['replica'].nunique()} replika)")
+                ax.spines[["top", "right"]].set_visible(False)
+                fig.tight_layout()
+                fig.savefig(target / f"{cx}_{Path(output).stem}.png", dpi=150)
+            except Exception as exc:
+                print(f"mean-sd cizimi basarisiz ({cx}, {output}): {exc}",
+                      file=sys.stderr)
+            finally:
+                if fig is not None:
+                    plt.close(fig)
 
 
 def compare_order(per_rep):
@@ -114,8 +150,12 @@ def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT):
     df = ts[ts["output"] == output]
     if df.empty:
         return
+    unit = df["unit"].iloc[0]
+    yconv, ylabel = scale_and_label(unit)
+    if unit != "nm":
+        _warn_unknown_unit(output, unit)
     per_rep = (df.groupby(["complex", "replica"])["value"].mean()
-                 .mul(NM_TO_ANGSTROM)
+                 .mul(yconv)
                  .reset_index())
     order = compare_order(per_rep)
     data = [per_rep.loc[per_rep["complex"] == c, "value"].to_numpy() for c in order]
@@ -131,7 +171,7 @@ def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT):
 
     ax.set_xticks(range(1, len(order) + 1))
     ax.set_xticklabels(order, rotation=90, fontsize=7)
-    ax.set_ylabel(f"Ortalama {Path(output).stem} (Å)")
+    ax.set_ylabel(f"Ortalama {Path(output).stem} ({ylabel})")
     ax.set_title("Kompleksler arasi karsilastirma (replika basina ortalama)")
     ax.spines[["top", "right"]].set_visible(False)
     handles = [plt.Line2D([], [], color=c, linewidth=6, alpha=0.75)
