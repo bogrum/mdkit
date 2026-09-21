@@ -77,6 +77,7 @@ mdkit_resolve_gmx() {
 mdkit_make_ref() {
     # $1 = replika dizini. $TPR_NAME zincir ID'lerini tasiyan topolojidir (spec 2.2).
     local rd="$1" err
+    rm -f "$rd/$REF_NAME"
     err="$("$GMX" trjconv -s "$rd/$TPR_NAME" -f "$rd/$TRAJ_NAME" \
         -o "$rd/$REF_NAME" -dump 0 2>&1 >/dev/null <<< "Protein")"
     if [[ ! -s "$rd/$REF_NAME" ]]; then
@@ -155,4 +156,44 @@ mdkit_group_size() {
         cur == want   { n += NF }
         END           { print n + 0 }
     ' "$1"
+}
+
+mdkit_log_init() {
+    mkdir -p "$RESULTS_DIR" || return 1
+    MDKIT_LOG="$RESULTS_DIR/run_log.csv"
+    if [[ ! -s "$MDKIT_LOG" ]]; then
+        echo "timestamp,complex,replica,analysis,status,seconds,error" > "$MDKIT_LOG"
+    fi
+    return 0
+}
+
+mdkit_log_row() {
+    # $1=complex $2=replica $3=analysis $4=status $5=seconds $6=error(opsiyonel)
+    local err="${6:-}"
+    err="${err//\"/\"\"}"      # standart CSV kacisi: tirnagi ikile
+    err="${err//$'\n'/ }"      # yeni satiri bosluga cevir
+    printf '%s,%s,%s,%s,%s,%s,"%s"\n' \
+        "$(date -Iseconds)" "$1" "$2" "$3" "$4" "$5" "$err" >> "$MDKIT_LOG"
+}
+
+mdkit_outputs_present() {
+    # $1 = cikti dizini, kalani beklenen dosya adlari
+    local out_dir="$1"; shift
+    local f
+    for f in "$@"; do
+        [[ -s "$out_dir/$f" ]] || return 1
+    done
+    return 0
+}
+
+mdkit_run_isolated() {
+    # $1 = analiz scripti, $2 = rep_dir, $3 = out_dir
+    # analysis_run alt kabukta kosar; hata ana donguyu dusurmez.
+    local out
+    MDKIT_LAST_ERROR=""
+    if out="$( source "$1" && analysis_run "$2" "$3" 2>&1 )"; then
+        return 0
+    fi
+    MDKIT_LAST_ERROR="$(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+    return 1
 }
