@@ -54,7 +54,7 @@ mdkit_rep_status() {
 }
 
 mdkit_complex_name() {
-    # /yol/last10_IMGQQPAPQV_A0201_pandora -> last10
+    # /yol/<kompleks>_<ek>_<ek> -> <kompleks>
     local base
     base="$(basename "${1%/}")"
     printf '%s\n' "${base%%_*}"

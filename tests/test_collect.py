@@ -130,6 +130,42 @@ def test_cok_serili_xvg_her_seriyi_ayri_satira_yazar(mdkit, fake_config, fake_da
     assert len(ts) == 2 * 3 * 2 * 2   # kompleks x replika x satir x seri
 
 
+def test_bilinmeyen_kind_uyarilir_ve_csvye_girmez(mdkit, fake_config, fake_dataset, tmp_path):
+    """collect(): ANALYSIS_KIND ne 'timeseries' ne 'profile' ise CSV'lere
+    sessizce girmemeli; stderr'e cikti adini ve kind'i belirten EN FAZLA BIR
+    satir yazilmali -- fake_dataset 2 kompleks x 3 replikadir, hepsi ayni
+    (output, kind) cifti icin uyari uretir, dedup bunu teke indirmeli.
+
+    Gecici bir 'matrix' eklentisi kullanilir ki test gercek --list yolunu
+    (run_analysis.sh --list -> collect_results.read_manifest) egzersiz
+    etsin, sahte/stub bir manifest degil."""
+    plugin = mdkit / "analysis" / "_zz_test_matrix_kind.sh"
+    plugin.write_text(textwrap.dedent("""\
+        ANALYSIS_NAME="zzmatrix"
+        ANALYSIS_DESC="test icin (matrix kind, henuz desteklenmiyor)"
+        ANALYSIS_KIND="matrix"
+        ANALYSIS_NEEDS_INDEX=0
+        ANALYSIS_DEFAULT_BEGIN=0
+        ANALYSIS_OUTPUTS=(matrix_test.xvg)
+        analysis_run() { echo "@ dummy" > "$2/matrix_test.xvg"; }
+        """))
+    try:
+        write_outputs(fake_dataset, {"matrix_test.xvg": PROFILE_XVG})
+        r = run_collect(mdkit, fake_config)
+        assert r.returncode == 0, r.stderr
+
+        warnings = [ln for ln in r.stderr.splitlines() if "matrix_test.xvg" in ln]
+        assert len(warnings) == 1, r.stderr
+        assert "matrix" in warnings[0]
+
+        ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").open()))
+        pr = list(csv.DictReader((tmp_path / "results" / "profile_long.csv").open()))
+        assert "matrix_test.xvg" not in {row["output"] for row in ts}
+        assert "matrix_test.xvg" not in {row["output"] for row in pr}
+    finally:
+        plugin.unlink()
+
+
 def test_bos_veri_seti_sadece_baslik_yazar(mdkit, fake_config, tmp_path):
     r = run_collect(mdkit, fake_config)
     assert r.returncode == 0, r.stderr

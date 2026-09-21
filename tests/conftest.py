@@ -8,9 +8,17 @@ from pathlib import Path
 import pytest
 
 MDKIT = Path(__file__).resolve().parents[1]
-REAL_ROOT = Path("/mnt/data/scratch-simulations-TUSEB")
-REAL_REP = REAL_ROOT / "last10_IMGQQPAPQV_A0201_pandora" / "rep1"
-GMX_BIN = Path("/usr/local/gromacs-2025.4-cuda/bin/gmx")
+
+# Testler bu makinenin gercek verisine bakar; baska bir makinede kosmak icin
+# asagidaki ortam degiskenleri ayarlanir. (mdkit'in KENDISI hicbir mutlak yol
+# icermez -- bkz. test_portability.py; bu istisna yalnizca test verisi icindir.)
+REAL_ROOT = Path(os.environ.get("MDKIT_TEST_DATA_ROOT",
+                                "/mnt/data/scratch-simulations-TUSEB"))
+REAL_REP_NAME = os.environ.get("MDKIT_TEST_REP",
+                               "last10_IMGQQPAPQV_A0201_pandora/rep1")
+REAL_REP = REAL_ROOT / REAL_REP_NAME
+GMX_BIN = Path(os.environ.get("MDKIT_TEST_GMX",
+                              "/usr/local/gromacs-2025.4-cuda/bin/gmx"))
 
 needs_gmx = pytest.mark.skipif(
     not (GMX_BIN.exists() and REAL_REP.exists()),
@@ -129,3 +137,9 @@ def real_config(tmp_path, small_rep):
         )
     )
     return cfg
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "slow: tam trajektori gerektiren, dakikalar suren testler"
+    )

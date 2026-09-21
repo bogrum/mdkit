@@ -96,6 +96,7 @@ def read_manifest(config):
 
 def collect(data_root, complex_glob, reps, manifest):
     timeseries, profile = [], []
+    warned = set()
     for cx in sorted(data_root.glob(complex_glob)):
         if not cx.is_dir():
             continue
@@ -109,6 +110,16 @@ def collect(data_root, complex_glob, reps, manifest):
                 if entry is None:
                     continue
                 analysis, kind = entry
+                if kind not in ("timeseries", "profile"):
+                    key = (xvg.name, kind)
+                    if key not in warned:
+                        warned.add(key)
+                        print(
+                            f"mdkit: taninmayan ANALYSIS_KIND {kind!r} "
+                            f"({xvg.name}) -- toplanmadan atlandi",
+                            file=sys.stderr,
+                        )
+                    continue
                 meta, rows = parse_xvg(xvg)
                 m = UNIT_IN_LABEL.search(meta.get("yaxis", ""))
                 unit = m.group(1) if m else ""
