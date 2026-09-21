@@ -33,3 +33,29 @@ mdkit_load_config() {
     fi
     return 0
 }
+
+mdkit_find_complexes() {
+    # $1 = hedef dizin, $2 = 1 ise hedefin altindaki kompleksleri tara
+    local target="${1%/}" all="${2:-0}"
+    if [[ "$all" == "1" ]]; then
+        find "$target" -mindepth 1 -maxdepth 1 -type d -name "$COMPLEX_GLOB" | sort
+    else
+        printf '%s\n' "$target"
+    fi
+}
+
+mdkit_rep_status() {
+    # $1 = replika dizini -> OK | NO_TRAJ | NO_TPR | NO_REF
+    local rd="$1"
+    if [[ ! -s "$rd/$TRAJ_NAME" ]]; then echo "NO_TRAJ"; return 0; fi
+    if [[ ! -s "$rd/$TPR_NAME"  ]]; then echo "NO_TPR";  return 0; fi
+    if [[ ! -s "$rd/$REF_NAME"  ]]; then echo "NO_REF";  return 0; fi
+    echo "OK"
+}
+
+mdkit_complex_name() {
+    # /yol/last10_IMGQQPAPQV_A0201_pandora -> last10
+    local base
+    base="$(basename "${1%/}")"
+    printf '%s\n' "${base%%_*}"
+}
