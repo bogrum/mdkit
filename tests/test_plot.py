@@ -412,3 +412,65 @@ def test_matrix_only_csv_olmadan_calisir(tmp_path):
     )
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "plots" / "matrix" / "last1_cross_rmsd.png").exists()
+
+
+def test_equilibrium_egrisi_tum_eslere_gore_ortalama(tmp_path):
+    """rep_i'nin her frame'i icin, TUM eslerin TUM frame'lerine ortalama
+    uzaklik.
+
+    Matris duzeni [y=es frame, x=kendi frame] oldugu icin esler axis=0'da
+    yigilir. Bu, birlestirilmis 3Nx3N matriste satir ortalamasi almanin
+    replika basina karsiligidir.
+    """
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "last1", "rep1", "rep1", [[0.0, 1.0], [1.0, 0.0]])
+    _write_matrix_npz(mdir, "last1", "rep1", "rep2", [[2.0, 3.0], [4.0, 5.0]])
+    recs = plot_results.load_matrices(tmp_path)[("last1", "cross_rmsd")]
+    curves = plot_results.equilibrium_curves(recs)
+    assert set(curves) == {"rep1"}
+    x_ps, curve = curves["rep1"]
+    assert np.allclose(x_ps, [0.0, 100.0])
+    # kolon 0: 0,1,2,4 -> 1.75 ; kolon 1: 1,0,3,5 -> 2.25
+    assert np.allclose(curve, [1.75, 2.25])
+
+
+def test_equilibrium_replika_basina_ayri_egri(tmp_path):
+    mdir = tmp_path / "matrices"
+    for i in ["rep1", "rep2"]:
+        for j in ["rep1", "rep2"]:
+            _write_matrix_npz(mdir, "last1", i, j, [[0.0, 0.5], [0.5, 0.0]])
+    recs = plot_results.load_matrices(tmp_path)[("last1", "cross_rmsd")]
+    assert set(plot_results.equilibrium_curves(recs)) == {"rep1", "rep2"}
+
+
+def test_equilibrium_uyusmayan_frame_sayisi_atlanir(tmp_path, capsys):
+    """Ayni rep_i'nin matrisleri ayni kendi-frame sayisina sahip olmali;
+    degilse yigmak sessizce yanlis olurdu."""
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "last1", "rep1", "rep1", [[0.0, 1.0], [1.0, 0.0]])
+    _write_matrix_npz(mdir, "last1", "rep1", "rep2", [[1.0, 2.0, 3.0]])
+    recs = plot_results.load_matrices(tmp_path)[("last1", "cross_rmsd")]
+    assert plot_results.equilibrium_curves(recs) == {}
+    assert "rep1" in capsys.readouterr().err
+
+
+def test_equilibrium_figuru_uretilir(tmp_path):
+    mdir = tmp_path / "matrices"
+    for i in ["rep1", "rep2"]:
+        for j in ["rep1", "rep2"]:
+            _write_matrix_npz(mdir, "last1", i, j, [[0.0, 0.5], [0.5, 0.0]])
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    assert (out / "matrix" / "last1_cross_rmsd.png").exists()
+    assert (out / "matrix" / "last1_cross_rmsd_equilibrium.png").exists()
+
+
+def test_equilibrium_hatasi_izgarayi_dusurmez(tmp_path, capsys):
+    """Izgara ve equilibrium ayri ayri yalitilir: biri patlarsa digeri
+    yine de diske yazilmis olmali."""
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "last1", "rep1", "rep1", [[0.0, 1.0], [1.0, 0.0]])
+    _write_matrix_npz(mdir, "last1", "rep1", "rep2", [[1.0, 2.0, 3.0]])
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    assert (out / "matrix" / "last1_cross_rmsd.png").exists()
