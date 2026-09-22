@@ -316,6 +316,9 @@ def load_matrices(results_dir):
                     "replica_i": str(d["replica_i"]),
                     "replica_j": str(d["replica_j"]),
                     "analysis": str(d["analysis"]),
+                    # Bu alan sonradan eklendi; onceden yazilmis .npz'ler
+                    # onu icermez ve yeniden cizim patlamamali.
+                    "title": str(d["title"]) if "title" in d.files else "",
                 }
         except Exception as exc:
             print(f"matris okunamadi ({f.name}): {exc}", file=sys.stderr)
@@ -354,6 +357,17 @@ def equilibrium_curves(recs):
         stack = np.concatenate([r["values"] for r in rs], axis=0)
         curves[rep_i] = (rs[0]["x_ps"], stack.mean(axis=0))
     return curves
+
+
+def window_label(window, x_ps):
+    """Pencereyi hem frame hem SURE olarak yazar.
+
+    Yalnizca frame sayisi yazmak yetmez: ayni 5 frame, -dt 200 ile 1 ns,
+    -dt 1000 ile 5 ns eder. dt cikarilamiyorsa uydurulmaz."""
+    if len(x_ps) > 1:
+        dt_ns = float(x_ps[1] - x_ps[0]) * PS_TO_NS
+        return f"pencere={window} frame ({window * dt_ns:g} ns)"
+    return f"pencere={window} frame"
 
 
 def rolling_mean(y, window):
@@ -411,7 +425,10 @@ def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
         if im is not None:
             fig.colorbar(im, ax=axes, label=f"RMSD ({ulabel})",
                          fraction=0.046, pad=0.02)
-        fig.suptitle(f"{cx} \u2014 {analysis}")
+        # gmx'in kendi basligi: NEYIN olculdugu. Olmadan okuyucu grafikten
+        # hangi buyuklugun cizildigini anlayamaz.
+        title = recs[0].get("title", "")
+        fig.suptitle(f"{cx} \u2014 {analysis}" + (f"\n{title}" if title else ""))
         fig.savefig(target / f"{cx}_{analysis}.png", dpi=150,
                     bbox_inches="tight")
     finally:
@@ -438,13 +455,16 @@ def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel):
             start, roll = rolling_mean(y, window)
             if roll.size:
                 ax.plot(x_ns[start:start + roll.size], roll, color=color,
-                        linewidth=2, label=f"{rep_i} (pencere={window} frame)")
+                        linewidth=2,
+                        label=f"{rep_i} \u00b7 {window_label(window, x_ps)}")
             else:
                 ax.plot([], [], color=color, linewidth=2, label=rep_i)
         ax.set_xlabel("Zaman (ns)")
         ax.set_ylabel(f"Ortalama RMSD ({ulabel})")
-        ax.set_title(f"{cx} \u2014 {analysis}: denge analizi\n"
-                     "(her frame'in tum es frame'lere ortalama uzakligi)")
+        title = recs[0].get("title", "")
+        ax.set_title(f"{cx} \u2014 {analysis}: denge analizi"
+                     + (f"\n{title}" if title else "")
+                     + "\n(her frame'in tum es frame'lere ortalama uzakligi)")
         ax.legend()
         fig.savefig(target / f"{cx}_{analysis}_equilibrium.png", dpi=150,
                     bbox_inches="tight")

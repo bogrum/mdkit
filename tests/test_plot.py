@@ -352,7 +352,7 @@ def test_compare_gruplar_verilince_efsane_config_etiketlerini_kullanir(
 
 
 def _write_matrix_npz(mdir, cx, rep_i, rep_j, values, unit="nm",
-                      analysis="cross_rmsd"):
+                      analysis="cross_rmsd", title=""):
     mdir.mkdir(parents=True, exist_ok=True)
     values = np.asarray(values, dtype=np.float32)
     n_y, n_x = values.shape
@@ -362,7 +362,7 @@ def _write_matrix_npz(mdir, cx, rep_i, rep_j, values, unit="nm",
         x_ps=np.arange(n_x, dtype=np.float64) * 100.0,
         y_ps=np.arange(n_y, dtype=np.float64) * 100.0,
         unit=unit, complex=cx, replica_i=rep_i, replica_j=rep_j,
-        analysis=analysis, output=f"{analysis}_{rep_j}.xpm",
+        analysis=analysis, output=f"{analysis}_{rep_j}.xpm", title=title,
     )
 
 
@@ -492,3 +492,43 @@ def test_rolling_mean_ortalanir(tmp_path):
 def test_rolling_mean_kisa_seri_bos_doner(tmp_path):
     start, vals = plot_results.rolling_mean(np.array([1.0, 2.0]), 3)
     assert start == 0 and vals.size == 0
+
+
+def test_window_label_sureyi_de_yazar(tmp_path):
+    """Yalnizca frame sayisi yetmez: ayni 5 frame, -dt 200 ile 1 ns,
+    -dt 1000 ile 5 ns eder. Okuyucu pencerenin ne kadar zamana denk
+    geldigini bilmeli."""
+    x_ps = np.array([0.0, 200.0, 400.0])
+    assert plot_results.window_label(5, x_ps) == "pencere=5 frame (1 ns)"
+
+
+def test_window_label_tek_frame_sureyi_atlar(tmp_path):
+    """dt cikarilamiyorsa uydurulmaz."""
+    assert plot_results.window_label(3, np.array([0.0])) == "pencere=3 frame"
+
+
+def test_baslik_npzden_tasinir(tmp_path):
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "last1", "rep1", "rep1", [[0.0, 0.5], [0.5, 0.0]],
+                      title="LIGAND_BB RMSD matrix")
+    recs = plot_results.load_matrices(tmp_path)[("last1", "cross_rmsd")]
+    assert recs[0]["title"] == "LIGAND_BB RMSD matrix"
+
+
+def test_baslik_olmayan_eski_npz_cokmez(tmp_path):
+    """Bu alan sonradan eklendi; onceden yazilmis .npz'ler onu icermez ve
+    yeniden cizim bu yuzden patlamamali."""
+    mdir = tmp_path / "matrices"
+    mdir.mkdir(parents=True)
+    np.savez_compressed(
+        mdir / "last1_rep1_cross_rmsd_rep1.npz",
+        values=np.array([[0.0, 0.5], [0.5, 0.0]], dtype=np.float32),
+        x_ps=np.array([0.0, 100.0]), y_ps=np.array([0.0, 100.0]),
+        unit="nm", complex="last1", replica_i="rep1", replica_j="rep1",
+        analysis="cross_rmsd",
+    )
+    recs = plot_results.load_matrices(tmp_path)[("last1", "cross_rmsd")]
+    assert recs[0]["title"] == ""
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    assert (out / "matrix" / "last1_cross_rmsd.png").exists()

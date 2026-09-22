@@ -150,3 +150,16 @@ def test_bin_tam_hassasiyet_korunur(tmp_path):
     p.write_bytes(vals.T.copy().tobytes())
     got = collect_results.parse_bin(p, 2, 2)
     assert np.allclose(got, vals, atol=0, rtol=1e-6)
+
+
+def test_baslik_okunur(tmp_path):
+    """gmx .xpm'e NEYIN olculdugunu yazar; figur bunu gostermeli, yoksa
+    okuyucu grafikten ne oldugunu anlayamaz."""
+    meta, _v, _x, _y = collect_results.parse_xpm(_write(tmp_path, SELF_XPM))
+    assert meta["title"] == "LIGAND_BB RMSD matrix"
+
+
+def test_baslik_yoksa_bos(tmp_path):
+    """Baslik zorunlu degil; olmamasi hata degil."""
+    meta, _v, _x, _y = collect_results.parse_xpm(_write(tmp_path, CPP2_XPM))
+    assert meta["title"] == ""
