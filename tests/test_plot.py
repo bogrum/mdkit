@@ -11,7 +11,7 @@ import plot_results  # noqa: E402
 pd = pytest.importorskip("pandas")
 
 TS_HEADER = "complex,replica,analysis,output,series,time_ps,value,unit\n"
-PR_HEADER = "complex,replica,analysis,output,series,residue,value,unit\n"
+PR_HEADER = ("complex,replica,analysis,output,series,residue,residue_from_end,value,unit\n")
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def results_dir(tmp_path):
             for res in range(1, 6):
                 pr_rows.append(
                     f"{cx},{rep},rmsf,rmsf_pep_self.xvg,LIGAND,{res},"
-                    f"{base + 0.02 * res},nm"
+                    f"{res - 5},{base + 0.02 * res},nm"
                 )
     (d / "timeseries_long.csv").write_text(TS_HEADER + "\n".join(ts_rows) + "\n")
     (d / "profile_long.csv").write_text(PR_HEADER + "\n".join(pr_rows) + "\n")
@@ -650,3 +650,121 @@ def test_renk_araligi_her_iki_sette_de_baslikta(tmp_path, monkeypatch):
     plot_results.plot_matrix(tmp_path, tmp_path / "plots")
     assert any("[renk skalasi:" in s for s in seen), seen
     assert any("[ortak renk skalasi:" in s for s in seen), seen
+
+
+# --- profil konum karsilastirmasi ---------------------------------------
+
+def test_position_bin_sinirlari():
+    """8-mer ve 11-mer'de ayni etiketler ayni ROLE denk gelmeli."""
+    pb = plot_results.position_bin
+    # 8-mer: 1..8
+    assert [pb(i, i - 8) for i in range(1, 9)] == \
+        ["P1", "P2", "orta", "orta", "orta", "orta", "PO-1", "PO"]
+    # 11-mer: 1..11
+    assert [pb(i, i - 11) for i in range(1, 12)] == \
+        ["P1", "P2"] + ["orta"] * 7 + ["PO-1", "PO"]
+
+
+def test_position_bin_kisa_peptidde_n_ucu_oncelikli():
+    """3-mer'de residue 2 hem P2 hem PO-1 olabilir; N-ucu kazanir,
+    yoksa ayni residue iki kutuya birden girer."""
+    pb = plot_results.position_bin
+    assert [pb(i, i - 3) for i in range(1, 4)] == ["P1", "P2", "PO"]
+
+
+def test_group_of():
+    g = [("top", "TRUE"), ("last", "FALSE")]
+    assert plot_results.group_of("top7", g) == "TRUE"
+    assert plot_results.group_of("last2", g) == "FALSE"
+    assert plot_results.group_of("baska1", g) is None
+
+
+def _profile_df(n_per_group=4, length=9):
+    import itertools
+    rows = []
+    for grp, base in [("top", 0.10), ("last", 0.20)]:
+        for k in range(n_per_group):
+            for rep in ["rep1", "rep2", "rep3"]:
+                for res in range(1, length + 1):
+                    orta = 2 < res < length - 1
+                    rows.append({
+                        "complex": f"{grp}{k}", "replica": rep,
+                        "analysis": "rmsf", "output": "rmsf_pep_self.xvg",
+                        "series": "LIGAND", "residue": res,
+                        "residue_from_end": res - length,
+                        "value": base + (0.05 if orta and grp == "last" else 0.0),
+                        "unit": "nm"})
+    return pd.DataFrame(rows)
+
+
+def test_profile_compare_figur_uretir(tmp_path):
+    groups = [("top", "TRUE"), ("last", "FALSE")]
+    plot_results.plot_profile_compare(_profile_df(), tmp_path, groups)
+    assert (tmp_path / "profile_compare" / "rmsf_pep_self.png").exists()
+
+
+def test_profile_compare_gruplar_yoksa_atlanir(tmp_path):
+    """COMPLEX_GROUPS tanimli degilse karsilastirilacak sey yok."""
+    plot_results.plot_profile_compare(_profile_df(), tmp_path, [])
+    assert not (tmp_path / "profile_compare").exists()
+
+
+def test_profile_compare_tek_grup_varsa_atlanir(tmp_path):
+    """Config'de iki grup tanimli ama veride yalnizca biri varsa test
+    yapilamaz; sessizce gecilmeli, uydurma p uretilmemeli."""
+    df = _profile_df()
+    df = df[df["complex"].str.startswith("top")]
+    plot_results.plot_profile_compare(df, tmp_path, [("top", "TRUE"),
+                                                     ("last", "FALSE")])
+    assert not (tmp_path / "profile_compare").exists()
+
+
+def test_profile_compare_uzun_profilde_cokmez(tmp_path):
+    """rmsf_mhc ~275 residue: 'orta' kutusu devasa olur ama bu bir hata
+    degil, yalnizca az bilgilendirici. Sihirli esikle gizlenmiyor."""
+    df = _profile_df(length=60)
+    df["output"] = "rmsf_mhc.xvg"
+    plot_results.plot_profile_compare(df, tmp_path,
+                                      [("top", "TRUE"), ("last", "FALSE")])
+    assert (tmp_path / "profile_compare" / "rmsf_mhc.png").exists()
+
+
+def test_profile_compare_uc_grupta_kruskal(tmp_path, capsys):
+    df = _profile_df()
+    ek = df[df["complex"] == "top0"].copy()
+    ek["complex"] = "orta0"
+    df = pd.concat([df, ek], ignore_index=True)
+    groups = [("top", "A"), ("last", "B"), ("orta", "C")]
+    plot_results.plot_profile_compare(df, tmp_path, groups)
+    assert (tmp_path / "profile_compare" / "rmsf_pep_self.png").exists()
+
+
+def test_profile_compare_eski_semada_uyarir_cokmez(tmp_path, capsys):
+    """Kolon sonradan eklendi; eski bir profile_long.csv ile cizim
+    yapilirsa TUM kosu cokmemeli, mod uyariyla atlanmali."""
+    df = _profile_df().drop(columns=["residue_from_end"])
+    plot_results.plot_profile_compare(df, tmp_path,
+                                      [("top", "TRUE"), ("last", "FALSE")])
+    assert not (tmp_path / "profile_compare").exists()
+    err = capsys.readouterr().err
+    assert "residue_from_end" in err and "collect_results.py" in err
+
+
+def test_profile_compare_replikalar_once_ortalanir():
+    """Ayni kompleksin replikalari BAGIMSIZ gozlem degildir.
+
+    Ortalanmazsa orneklem yapay olarak ucer katina cikar ve p degeri
+    oldugundan kucuk cikar -- yani olmayan bir anlamlilik uretilir.
+    """
+    df = _profile_df(n_per_group=2, length=9)
+    df["grup"] = df["complex"].str[:3]
+    df["kutu"] = [plot_results.position_bin(r, e) for r, e
+                  in zip(df["residue"], df["residue_from_end"])]
+    out = plot_results.profile_complex_means(df)
+    # 2 grup x 2 kompleks = 4 kompleks, 5 konum kutusu -> 20 satir
+    assert len(out) == 20
+    assert out.groupby(["kutu", "grup"]).size().unique().tolist() == [2]
+    # uc replika ayni degerde oldugu icin ortalama o degere esit olmali
+    ham = df[(df.kutu == "orta") & (df["complex"] == "top0")]["value"].mean()
+    ort = out[(out.kutu == "orta") & (out["complex"] == "top0")]["value"].iloc[0]
+    assert ort == pytest.approx(ham)

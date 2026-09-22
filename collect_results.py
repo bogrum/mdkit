@@ -37,8 +37,14 @@ XPM_VALUE = re.compile(r'/\*\s*"(.*?)"\s*\*/')
 
 TS_FIELDS = ["complex", "replica", "analysis", "output", "series",
              "time_ps", "value", "unit"]
+# residue_from_end: C-ucundan sayan konum (son residue 0, oncesi -1, ...).
+# Peptidler 8-11 residue arasinda degistigi icin HAM residue numarasi
+# kompleksler arasi karsilastirilamaz: bir 8-mer'in 5. residue'su ortada,
+# 11-mer'in 5.'si degil. Iki kolon birlikte her turlu konum normalizasyonunu
+# turetilebilir kilar. ETIKET (P1/PO gibi) burada TUTULMAZ -- o bir yorumdur
+# ve cizim katmanina aittir.
 PR_FIELDS = ["complex", "replica", "analysis", "output", "series",
-             "residue", "value", "unit"]
+             "residue", "residue_from_end", "value", "unit"]
 MX_FIELDS = ["complex", "replica_i", "replica_j", "analysis", "output",
              "n_x", "n_y", "dt_ps", "min", "mean", "max", "mean_vs_self",
              "unit"]
@@ -324,6 +330,9 @@ def collect(data_root, complex_glob, reps, manifest, matrix_dir=None):
                 meta, rows = parse_xvg(xvg)
                 m = UNIT_IN_LABEL.search(meta.get("yaxis", ""))
                 unit = m.group(1) if m else ""
+                # Uzunluk DOSYA basina okunur: ayni kosuda farkli uzunlukta
+                # profiller (peptid ~10, MHC ~275) bir arada bulunur.
+                n_res = int(max(r[0] for r in rows)) if rows else 0
                 for row in rows:
                     x, ys = row[0], row[1:]
                     for i, y in enumerate(ys):
@@ -340,6 +349,7 @@ def collect(data_root, complex_glob, reps, manifest, matrix_dir=None):
                             timeseries.append(rec)
                         elif kind == "profile":
                             rec["residue"] = int(x)
+                            rec["residue_from_end"] = int(x) - n_res
                             profile.append(rec)
 
     # Oran ancak TUM matrisler toplandiktan sonra hesaplanabilir: bir
