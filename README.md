@@ -393,6 +393,14 @@ boyle bir sapma icermez -- TAM simetriktir ve kosegeni TAM sifirdir.
 Sessiz bir yanlislik degil: eksik dosya toplanmaz, sonraki tam kosu eksikligi
 gorup yeniden uretir.
 
+**Denge egrisinin penceresi SABIT bir suredir** (`--matrix-smooth-ns`,
+varsayilan 1.0 ns; `0` kapatir). Serinin oranina baglanmis bir pencere
+(`n/20` gibi) filtrenin kesme frekansini kosu uzunluguna baglar: ayni sistem
+20 ns yerine 100 ns kosuldugunda ayni surec farkli duzlestirilir. 1.0 ns,
+gercek veride olculen otokorelasyon surelerinin (`tau_int` 0.5-7.8 ns, medyan
+~3.9 ns) hemen hepsinin altinda kalir. Pencere ORTALANIR ve ham egri her zaman
+figurde kalir.
+
 **DSSP gibi farkli semantikli 2B ciktilar** (residue x zaman) bu izgara
 ciziminden faydalanmaz; onlar icin ayri bir cizim bicimi gerekir. Toplama
 katmani ise genel: `collect_results.py` replika adiyla eslesmeyen bir matris

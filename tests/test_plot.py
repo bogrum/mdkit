@@ -549,3 +549,38 @@ def test_matrix_caption_altbaslik_yoksa_baslik(tmp_path):
 
 def test_matrix_caption_ikisi_de_yoksa_bos(tmp_path):
     assert plot_results.matrix_caption({}) == ""
+
+
+def test_equilibrium_window_sabit_sureden_gelir(tmp_path):
+    """Pencere SABIT bir sureden gelir, seri uzunlugunun oranindan degil.
+
+    Oransal kural (n/20) filtrenin kesme frekansini KOSU UZUNLUGUNA
+    baglardi: ayni sistem 20 ns yerine 100 ns kosuldugunda ayni fiziksel
+    surec farkli duzlestirilirdi. Gercek veride olculdu -- n/20, 100 ns'lik
+    kosuda 4.6 ns pencere verip bir konformasyonel cikisin genliginin
+    %69'unu yutuyordu.
+    """
+    x_ps = np.arange(20, dtype=float) * 200.0        # dt = 200 ps
+    assert plot_results.equilibrium_window(x_ps, 1.0) == 5
+    # Ayni sure, daha ince ornekleme -> daha cok frame
+    assert plot_results.equilibrium_window(np.arange(200, dtype=float) * 50.0,
+                                           1.0) == 20
+    # Pencere seriden uzun olamaz
+    assert plot_results.equilibrium_window(np.arange(4, dtype=float) * 200.0,
+                                           1.0) == 0
+
+
+def test_equilibrium_window_kaba_ornekleme_duzlestirilmez(tmp_path):
+    """dt = 500 ps ise 1 ns yalnizca 2 frame eder; 3'un altinda
+    duzlestirme anlamsizdir, uydurulmaz."""
+    x_ps = np.array([0.0, 500.0, 1000.0])
+    assert plot_results.equilibrium_window(x_ps, 1.0) == 0
+
+
+def test_equilibrium_window_sifir_kapatir(tmp_path):
+    x_ps = np.array([0.0, 200.0, 400.0])
+    assert plot_results.equilibrium_window(x_ps, 0) == 0
+
+
+def test_equilibrium_window_tek_frame(tmp_path):
+    assert plot_results.equilibrium_window(np.array([0.0]), 1.0) == 0

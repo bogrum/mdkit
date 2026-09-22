@@ -42,6 +42,20 @@ DEFAULT_COMPARE_OUTPUT = "rmsd_pep_on_mhc.xvg"
 # CIZGILERINI ayirmak icin secilmisti, sirali bir buyuklugu kodlamak icin degil.
 MATRIX_CMAP = "viridis"
 
+# Denge egrisinin yuvarlanan ortalama penceresi, ns. SABIT bir SUREDIR;
+# serinin oranı (n/20) DEGILDIR. Gerekce: yuvarlanan ortalama bir alcak
+# geciren filtredir ve kesme frekansi ~1/pencere; dolayisiyla pencere,
+# ayrilmak istenen iki FIZIKSEL zaman olceginin arasina konur. Oransal bir
+# kural filtreyi kosu uzunluguna baglar -- ayni sistem 20 ns yerine 100 ns
+# kosuldugunda ayni surec farkli duzlestirilir.
+#
+# 1.0 ns secildi cunku gercek veride olculen otokorelasyon sureleri
+# (tau_int) 0.5-7.8 ns araliginda, medyan ~3.9 ns; 1 ns bunlarin hemen
+# hepsinin ALTINDA kalir, yani korelasyonlu gercek yapiyi bozmadan hizli
+# titresimi alir. Onceki n/20 kurali 100 ns'lik kosuda 4.6 ns veriyor ve
+# bir konformasyonel cikisin genliginin %69'unu yutuyordu.
+DEFAULT_MATRIX_SMOOTH_NS = 1.0
+
 
 def scale_and_label(unit):
     """(carpan, eksen etiketi). Yalnizca nm cevrilir; bilinmeyen birim
@@ -370,6 +384,21 @@ def matrix_caption(rec):
     return rec.get("subtitle") or rec.get("title") or ""
 
 
+def equilibrium_window(x_ps, smooth_ns):
+    """Verilen SURE penceresinin kac frame ettigini dondurur; 0 = duzlestirme yok.
+
+    Kayit araligi verinin kendisinden okunur: 50 frame tek basina bir sey
+    ifade etmez, 200 ps araliktaki 5 frame ile 10 ps araliktaki 5 frame
+    farkli surelerdir. 3 frame'in altinda duzlestirme anlamsizdir."""
+    if smooth_ns <= 0 or len(x_ps) < 2:
+        return 0
+    dt_ns = float(x_ps[1] - x_ps[0]) * PS_TO_NS
+    if dt_ns <= 0:
+        return 0
+    w = int(round(smooth_ns / dt_ns))
+    return w if 3 <= w <= len(x_ps) else 0
+
+
 def window_label(window, x_ps):
     """Pencereyi hem frame hem SURE olarak yazar.
 
@@ -447,7 +476,8 @@ def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
         plt.close(fig)
 
 
-def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel):
+def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel,
+                      smooth_ns=DEFAULT_MATRIX_SMOOTH_NS):
     """Replika basina denge egrisi, ortak zaman ekseninde."""
     curves = equilibrium_curves(recs)
     if not curves:
@@ -462,8 +492,10 @@ def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel):
             # Pencere frame SAYISIYLA degil, serinin oranıyla secilir:
             # sabit bir pencere farkli -dt degerlerinde farkli sureye denk
             # gelir ve egriler kiyaslanamaz hale gelir.
-            n = len(y)
-            window = max(3, round(n / 20))
+            # Pencere AYNI figurdeki butun egrilerde ayni: her egriye kendi
+            # otokorelasyon suresinden pencere vermek onlari
+            # karsilastirilamaz kilardi.
+            window = equilibrium_window(x_ps, smooth_ns)
             start, roll = rolling_mean(y, window)
             if roll.size:
                 ax.plot(x_ns[start:start + roll.size], roll, color=color,
@@ -484,7 +516,7 @@ def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel):
         plt.close(fig)
 
 
-def plot_matrix(results_dir, out_dir):
+def plot_matrix(results_dir, out_dir, smooth_ns=DEFAULT_MATRIX_SMOOTH_NS):
     """--matrix modu: kompleks basina isi haritasi izgarasi + denge egrisi."""
     groups = load_matrices(results_dir)
     if not groups:
@@ -508,7 +540,8 @@ def plot_matrix(results_dir, out_dir):
             print(f"matris cizimi basarisiz ({cx}, {analysis}): {exc}",
                   file=sys.stderr)
         try:
-            _draw_equilibrium(cx, analysis, recs, target, conv, ulabel)
+            _draw_equilibrium(cx, analysis, recs, target, conv, ulabel,
+                              smooth_ns)
         except Exception as exc:
             print(f"denge cizimi basarisiz ({cx}, {analysis}): {exc}",
                   file=sys.stderr)
@@ -523,6 +556,10 @@ def main():
     ap.add_argument("--mean-sd", action="store_true")
     ap.add_argument("--compare", action="store_true")
     ap.add_argument("--matrix", action="store_true")
+    ap.add_argument("--matrix-smooth-ns", type=float,
+                    default=DEFAULT_MATRIX_SMOOTH_NS,
+                    help="denge egrisinin yuvarlanan ortalama penceresi, ns "
+                         f"(varsayilan {DEFAULT_MATRIX_SMOOTH_NS}; 0 kapatir)")
     ap.add_argument("--compare-output", default=DEFAULT_COMPARE_OUTPUT)
     args = ap.parse_args()
 
@@ -541,7 +578,7 @@ def main():
     if args.compare or run_all:
         plot_compare(ts, out_dir, args.compare_output, groups)
     if args.matrix or run_all:
-        plot_matrix(args.results_dir, out_dir)
+        plot_matrix(args.results_dir, out_dir, args.matrix_smooth_ns)
 
     print(f"grafikler -> {out_dir}")
 
