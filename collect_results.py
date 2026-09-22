@@ -40,7 +40,8 @@ TS_FIELDS = ["complex", "replica", "analysis", "output", "series",
 PR_FIELDS = ["complex", "replica", "analysis", "output", "series",
              "residue", "value", "unit"]
 MX_FIELDS = ["complex", "replica_i", "replica_j", "analysis", "output",
-             "n_x", "n_y", "dt_ps", "min", "mean", "max", "unit"]
+             "n_x", "n_y", "dt_ps", "min", "mean", "max", "mean_vs_self",
+             "unit"]
 
 
 def parse_xvg(path):
@@ -340,7 +341,47 @@ def collect(data_root, complex_glob, reps, manifest, matrix_dir=None):
                         elif kind == "profile":
                             rec["residue"] = int(x)
                             profile.append(rec)
+
+    # Oran ancak TUM matrisler toplandiktan sonra hesaplanabilir: bir
+    # capraz ciftin paydasi, iki farkli replikanin self matrislerinden gelir.
+    add_self_ratio(matrices)
     return timeseries, profile, matrices
+
+
+def add_self_ratio(matrices):
+    """Her matrise `mean_vs_self` ekler: ortalamanin, ilgili SELF
+    matrislerin ortalamasina orani.
+
+        mean_vs_self = mean / ((self_i + self_j) / 2)
+
+    "Replikalar ayni konformasyonel alani mi ornekliyor?" sorusunun NICEL
+    cevabi. 1'e yakin = evet (capraz uzaklik, replika ICI uzakliktan farkli
+    degil); buyudukce = hayir (replikalar farkli havzalarda). Isi
+    haritasina bakip goz karariyla soylemek yerine sayiyla soylenebilir --
+    ve renk skalasi kompleksten komplekse degistigi icin goz karari zaten
+    guvenilmez.
+
+    Self satirlarda tanim geregi 1.0. Referans self matrisi yoksa (or.
+    replika adiyla eslesmeyen bir matris, replica_j bos) oran UYDURULMAZ,
+    bos birakilir.
+
+    DIKKAT: self ortalamalari kosegen HARIC hesaplanir (bkz. collect_matrix),
+    capraz ortalamalar ise tum hucreleri icerir. Payda bu yuzden bir miktar
+    BUYUK, yani oran biraz muhafazakar -- heterojenligi abartmaz.
+    """
+    selfs = {}
+    for r in matrices:
+        if r["replica_i"] == r["replica_j"] and r["replica_i"]:
+            selfs[(r["complex"], r["analysis"], r["replica_i"])] = r["mean"]
+
+    for r in matrices:
+        a = selfs.get((r["complex"], r["analysis"], r["replica_i"]))
+        b = selfs.get((r["complex"], r["analysis"], r["replica_j"]))
+        if a is None or b is None or (a + b) <= 0:
+            r["mean_vs_self"] = ""
+        else:
+            r["mean_vs_self"] = r["mean"] / ((a + b) / 2)
+    return matrices
 
 
 def collect_matrix(xpm, cname, rep, reps, analysis, matrix_dir):

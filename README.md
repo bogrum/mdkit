@@ -394,6 +394,20 @@ boyle bir sapma icermez -- TAM simetriktir ve kosegeni TAM sifirdir.
 Sessiz bir yanlislik degil: eksik dosya toplanmaz, sonraki tam kosu eksikligi
 gorup yeniden uretir.
 
+**`matrix_summary.csv`'deki `mean_vs_self` kolonu**, "replikalar ayni
+konformasyonel alani mi ornekliyor?" sorusunun nicel cevabidir:
+
+    mean_vs_self = mean / ((self_i + self_j) / 2)
+
+1'e yakin = evet (capraz uzaklik, replika ICI uzakliktan farkli degil);
+buyudukce = hayir. Isi haritasina bakip goz karariyla karar vermenin yerini
+alir -- renk skalasi kompleksten komplekse degistigi icin goz karari zaten
+guvenilmezdir. Oran CIFT basinadir: gercek veride heterojenligin cogunlukla
+komplekse yayilmadigi, TEK bir replika ciftinden geldigi gorulur. Self
+satirlarda tanim geregi 1.0; referans self matrisi yoksa bos birakilir.
+Self ortalamalari kosegen haric hesaplandigi icin payda bir miktar buyuktur,
+yani oran muhafazakardir.
+
 **Renk skalasi IKI sette birden uretilir.** `plots/matrix/` her kompleksi
 KENDI araligiyla cizer (kompleks ICI kontrast korunur); `plots/matrix_global/`
 ayni analizin butun komplekslerini ORTAK bir aralikla cizer (kompleksler ARASI
