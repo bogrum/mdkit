@@ -287,6 +287,23 @@ sozlesmesi geregi cizim tarafina aittir. Baska bir semaya (or. yalnizca ankraj
 N-ucu **oncelikli**: 3 residue'luk bir peptidde 2. residue hem `P2` hem
 `PO-1` olurdu ve ayni olcum iki kutuya birden girerdi.
 
+> **Figurde uzunluk dagilimi HER ZAMAN yazar.** Basligin ucuncu satiri her
+> grubun profil uzunlugu medyanini, araligini ve kompleks sayisini gosterir.
+> Bu bir esige BAGLANMAZ ("medyanlar X'ten fazla farkliysa uyar" gibi):
+> tam esikte olan bir vaka sessizce gecerdi. Karar okuyucunun.
+>
+> Gerekce olculdu. Bu veri setinde konuma dayali iki "anlamli" sonuc
+> cikti ve **ikisi de uzunluk farkindan** geliyordu:
+>
+> | bulgu | ham p | karisan | uzunluga gore tabakali |
+> |---|---|---|---|
+> | peptid orta bolge | 0.023 | peptid uzunlugu (rho +0.29) | 9-mer'de p=0.955 |
+> | MHC son residue | 0.005 | MHC zincir uzunlugu (rho **+0.888**) | 275'te 0.234, 276'da 1.000 |
+>
+> Uclardan sayilan konumlar (`PO`, `PO-1`) uzunluga ozellikle duyarlidir:
+> "son residue" tanim geregi sistemin BITTIGI yerdir, her komplekste ayni
+> residue degil.
+
 > **`--profile-compare` coklu test uretir.** Bes konum test edilir; figurun
 > basliginda Bonferroni esigi (`0.05/5 = 0.01`) yazar ve esigi gecmeyen p
 > degerleri **soluk** cizilir. Tek bir `p < 0.05` gorup anlamli saymayin --
