@@ -1,6 +1,11 @@
+import os
 import subprocess
+import sys
+from pathlib import Path
 
-from conftest import run_bash
+import numpy as np
+
+from conftest import needs_gmx, run_bash
 
 
 def _list(mdkit, config):
@@ -63,3 +68,126 @@ def test_yardimci_degisken_sizmiyor(mdkit, lib, fake_config):
         f'echo "SIZDI=${{_cross_rmsd_rep:-yok}}"'
     )
     assert "SIZDI=yok" in r.stdout, r.stdout
+
+
+CONTRACT = """
+source "{lib}"
+mdkit_load_config "{config}"
+GMX="{gmx}"
+REF_PDB="{rep}/check_ref.pdb"
+XTC="{rep}/traj_compact_center_dry.xtc"
+NDX="{rep}/analysis/index.ndx"
+B_PS=0
+FORCE=0
+mdkit_clear_plugin
+source "{mdkit}/analysis/cross_rmsd.sh"
+analysis_run "{rep}" "{out}"
+"""
+
+
+def _code_lines(path):
+    """Yorumlari atilmis kaynak.
+
+    Bayrak testleri KODU olcmeli. Eklentinin icinde neden -skip/-tu
+    kullanilmadigini anlatan aciklama satirlari var; ham metinde arama
+    yapmak bu aciklamalarin kendisini ihlal sayardi.
+    """
+    return "\n".join(
+        line for line in path.read_text().splitlines()
+        if not line.strip().startswith("#")
+    )
+
+
+def test_uyusmayan_es_sistemi_reddedilir(mdkit, lib, fake_config,
+                                         fake_dataset, tmp_path):
+    """Capraz rms TEK index'i IKI trajektoriye birden uygular; esin sistemi
+    farkliysa matris sessizce cop olur. gmx yolu bilerek gecersiz: koruma
+    gmx cagrilmadan ONCE donmeli."""
+    cx = fake_dataset / "last1_AAA_A0201_pandora"
+    (cx / "rep1" / "check_ref.pdb").write_text("ATOM      1  N\n" * 10)
+    (cx / "rep2" / "check_ref.pdb").write_text("ATOM      1  N\n" * 4)
+    (cx / "rep3" / "check_ref.pdb").write_text("ATOM      1  N\n" * 10)
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_bash(CONTRACT.format(
+        lib=lib, config=fake_config, gmx="/nonexistent/gmx",
+        rep=cx / "rep1", mdkit=mdkit, out=out,
+    ))
+    assert r.returncode != 0
+    assert "uyusmuyor" in (r.stdout + r.stderr).lower()
+
+
+def test_eksik_es_trajektorisi_reddedilir(mdkit, lib, fake_config,
+                                          fake_dataset, tmp_path):
+    cx = fake_dataset / "top1_BBB_A0201_pandora"
+    (cx / "rep2" / "traj_compact_center_dry.xtc").unlink()
+    out = tmp_path / "out2"
+    out.mkdir()
+    r = run_bash(CONTRACT.format(
+        lib=lib, config=fake_config, gmx="/nonexistent/gmx",
+        rep=cx / "rep1", mdkit=mdkit, out=out,
+    ))
+    assert r.returncode != 0
+    assert "trajektori" in (r.stdout + r.stderr).lower()
+
+
+def test_koruma_gmx_cagrilmadan_once_doner(mdkit, lib, fake_config,
+                                           fake_dataset, tmp_path):
+    """Dogrulama hesap dongusunun ICINDE olsaydi self-matris (ilk es) once
+    uretilir, bozuk ikinci es ancak ondan SONRA fark edilirdi: out_dir'de
+    yarim bir cikti kumesi kalirdi."""
+    cx = fake_dataset / "last1_AAA_A0201_pandora"
+    (cx / "rep1" / "check_ref.pdb").write_text("ATOM      1  N\n" * 10)
+    (cx / "rep2" / "check_ref.pdb").write_text("ATOM      1  N\n" * 4)
+    (cx / "rep3" / "check_ref.pdb").write_text("ATOM      1  N\n" * 10)
+    out = tmp_path / "out3"
+    out.mkdir()
+    r = run_bash(CONTRACT.format(
+        lib=lib, config=fake_config, gmx="/nonexistent/gmx",
+        rep=cx / "rep1", mdkit=mdkit, out=out,
+    ))
+    assert r.returncode != 0
+    assert list(out.iterdir()) == [], "hicbir matris yazilmamaliydi"
+    assert "gmx" not in r.stderr.lower() or "uyusmuyor" in r.stderr.lower()
+
+
+def test_skip_ve_tu_kullanilmiyor(mdkit):
+    """spec 2.2: -skip .xpm eksen zamanlarini bozar, -tu -b/-e'yi cevirir."""
+    src = _code_lines(mdkit / "analysis" / "cross_rmsd.sh")
+    assert " -skip" not in src
+    assert " -tu" not in src
+    assert " -dt " in src
+
+
+@needs_gmx
+def test_gercek_capraz_matris(mdkit, real_config):
+    """real_config tek replikali (REPS=(rep1)); self-matris uretilmeli.
+
+    small_rep 0-200 ps'lik 21 frame'dir, bu yuzden -b 0 ve CROSS_RMSD_DT=50
+    verilir: eklentinin varsayilani (ANALYSIS_DEFAULT_BEGIN=10000) bu kisa
+    trajektoride bos cikti uretirdi."""
+    root = subprocess.run(
+        ["bash", "-c",
+         f'source "{mdkit}/analysis/lib.sh" && '
+         f'mdkit_load_config "{real_config}" && printf "%s" "$DATA_ROOT"'],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    r = subprocess.run(
+        ["bash", str(mdkit / "run_analysis.sh"), "-c", str(real_config),
+         "-a", "cross_rmsd", "-b", "0", "--all", root],
+        capture_output=True, text=True,
+        env={**os.environ, "CROSS_RMSD_DT": "50"},
+    )
+    assert r.returncode == 0, r.stderr
+    xpm = next(Path(root).glob("*/rep1/analysis/cross_rmsd_rep1.xpm"), None)
+    assert xpm is not None, r.stdout
+
+    sys.path.insert(0, str(mdkit))
+    import collect_results
+    meta, values, x, y = collect_results.parse_xpm(xpm)
+    assert values.shape[0] == values.shape[1] == len(x) == len(y)
+    assert meta["unit"] == "nm"
+    # Self-matriste kosegen TANIM GEREGI sifir. Ayristiricinin satir cevirmesi
+    # ile gmx'in GERCEK yazma sirasinin uyustugunun kaniti -- fixture'lar bunu
+    # gosteremez, cunku fixture'i da biz yaziyoruz.
+    assert np.allclose(np.diag(values), 0.0, atol=1e-3)

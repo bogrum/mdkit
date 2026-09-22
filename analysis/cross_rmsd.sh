@@ -36,7 +36,94 @@ unset _cross_rmsd_rep
 # Ciktilarin hepsi KOSULSUZ uretilir.
 ANALYSIS_OPTIONAL_OUTPUTS=()
 
-analysis_run() {
-    local rep_dir="$1" out_dir="$2"
+_cross_rmsd_atom_count() {
+    # $1 = PDB. Mutlak dogruluk degil, iki replika ARASINDA esitlik onemli.
+    local n
+    n="$(grep -c -E '^(ATOM|HETATM)' "$1" 2>/dev/null)" || n=0
+    printf '%s' "${n:-0}"
+}
+
+_cross_rmsd_check_peers() {
+    # $1 = kompleks dizini. TUM esler, HICBIR gmx cagrisi yapilmadan ONCE
+    # dogrulanir.
+    #
+    # Sira onemli: dogrulama hesap dongusunun ICINDE olsaydi self-matris (ilk
+    # es) once uretilir, bozuk bir ikinci es ancak dakikalar suren bir gmx
+    # kosusundan SONRA fark edilirdi -- ve out_dir'de yarim bir cikti kumesi
+    # kalirdi. Yarim kume, mdkit_mandatory_outputs acisindan "eksik" demektir,
+    # yani analiz her kosuda bastan kosardi.
+    local cx_dir="$1" peer peer_dir own_atoms peer_atoms
+    own_atoms="$(_cross_rmsd_atom_count "$REF_PDB")"
+
+    for peer in ${REPS[@]+"${REPS[@]}"}; do
+        peer_dir="$cx_dir/$peer"
+
+        if [[ ! -s "$peer_dir/$TRAJ_NAME" ]]; then
+            echo "es replikanin trajektorisi yok: $peer_dir/$TRAJ_NAME" >&2
+            return 1
+        fi
+
+        # Capraz rms TEK bir index dosyasini IKI trajektoriye birden uygular.
+        # Esin sistemi farkliysa (atom sayisi/sirasi) matris SESSIZCE cop olur.
+        peer_atoms="$(_cross_rmsd_atom_count "$peer_dir/$REF_NAME")"
+        if [[ "$peer_atoms" != "$own_atoms" ]]; then
+            echo "es replikanin sistemi uyusmuyor ($peer: $peer_atoms atom, kendi: $own_atoms)" >&2
+            return 1
+        fi
+    done
     return 0
+}
+
+_cross_rmsd_pairs() {
+    # $1 = kompleks dizini, $2 = out_dir, $3 = gecici .xvg yolu.
+    # Esler _cross_rmsd_check_peers tarafindan ZATEN dogrulandi.
+    local cx_dir="$1" out_dir="$2" tmp_xvg="$3"
+    local peer peer_xtc out dt
+    dt="${CROSS_RMSD_DT:-200}"
+
+    for peer in ${REPS[@]+"${REPS[@]}"}; do
+        peer_xtc="$cx_dir/$peer/$TRAJ_NAME"
+        out="$out_dir/cross_rmsd_${peer}.xpm"
+
+        # -skip KULLANILMAZ: .xpm eksen zamanlarini bozar -- ilk zaman dogru,
+        #   gerisi 0 yazilir (GROMACS 2025.4'te olculdu). Seyreltme -dt ile.
+        # -tu KULLANILMAZ: -b/-e degerlerini de cevirir.
+        # -b HER IKI trajektoriye de uygulanir (olculdu), es icin ayrica
+        #   kirpma gerekmez.
+        # -o acikca verilir: gmx rms -o'suz cagrildiginda rmsd.xvg'yi CALISMA
+        #   DIZININE yazar. out_dir'e yazmak da olmaz -- manifestoda ilan
+        #   edilmeyen bir .xvg her toplamada uyari uretirdi.
+        if [[ "$peer_xtc" == "$XTC" ]]; then
+            # Self-matris: -f2 verilmez. Olculen ve kosegeni sifir dogrulanan
+            # bicim budur.
+            "$GMX" rms -s "$REF_PDB" -f "$XTC" -n "$NDX" \
+                -m "$out" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
+                <<< $'RECEPTOR_BB\nLIGAND_BB' \
+                || { echo "gmx rms basarisiz: cross_rmsd_${peer}" >&2; return 1; }
+        else
+            "$GMX" rms -s "$REF_PDB" -f "$XTC" -f2 "$peer_xtc" -n "$NDX" \
+                -m "$out" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
+                <<< $'RECEPTOR_BB\nLIGAND_BB' \
+                || { echo "gmx rms basarisiz: cross_rmsd_${peer}" >&2; return 1; }
+        fi
+
+        [[ -s "$out" ]] || {
+            echo "matris uretilmedi: cross_rmsd_${peer}" >&2
+            return 1
+        }
+    done
+    return 0
+}
+
+analysis_run() {
+    local rep_dir="$1" out_dir="$2" cx_dir tmp_dir rc
+    cx_dir="$(dirname "$rep_dir")"
+
+    _cross_rmsd_check_peers "$cx_dir" || return 1
+
+    tmp_dir="$(mktemp -d)" || { echo "gecici dizin acilamadi" >&2; return 1; }
+    _cross_rmsd_pairs "$cx_dir" "$out_dir" "$tmp_dir/rms.xvg"
+    rc=$?
+    rm -rf "$tmp_dir"
+    return "$rc"
 }
