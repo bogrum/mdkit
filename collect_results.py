@@ -197,6 +197,25 @@ def read_manifest(config):
     return manifest
 
 
+def parse_bin(path, n_x, n_y):
+    """gmx rms -bin ham dump'ini (n_y, n_x) float32 matrise cevirir.
+
+    Duzen GROMACS 2025.4'te OLCULDU: dosya BASLIKSIZDIR, float32'dir ve
+    [x][y] sirasinda yazilir -- yani .xpm'in TRANSPOZESI. .xpm'den farkli
+    olarak satir cevirme (rows[::-1]) GEREKMEZ; cevirmek matrisi bozar.
+
+    Baslik olmadigi icin boyutlar disaridan gelir (.xpm'den) ve tek
+    dogrulama dosya boyutudur: yanlis sekillendirilen bir matris sessizce
+    cop olurdu.
+    """
+    raw = np.fromfile(path, dtype=np.float32)
+    if raw.size != n_x * n_y:
+        raise ValueError(
+            f"{path.name}: {raw.size} deger var, {n_x}x{n_y}={n_x * n_y} bekleniyordu"
+        )
+    return raw.reshape(n_x, n_y).T.copy()
+
+
 def peer_replica(output_name, reps):
     """'cross_rmsd_rep2.xpm' -> 'rep2'; eslesme yoksa None.
 

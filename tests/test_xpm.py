@@ -113,3 +113,40 @@ def test_bozuk_dosya_valueerror(tmp_path):
     bad = SELF_XPM.replace('"3 3   3 1"', '"3 5   3 1"')
     with pytest.raises(ValueError):
         collect_results.parse_xpm(_write(tmp_path, bad))
+
+
+# --- parse_bin: gmx rms -bin ham binary dump ----------------------------
+
+def test_bin_kare_olmayan_matris(tmp_path):
+    """Duzen GROMACS 2025.4'te olculdu: dosya [x][y] sirasinda float32,
+    BASLIKSIZ. Yani reshape(n_x, n_y).T -> (n_y, n_x).
+
+    Kare bir fixture bu duzeni DOGRULAYAMAZ: yanlis reshape de dogru sekli
+    verir. Bu yuzden test bilerek 2x3.
+    """
+    expected = np.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]], dtype=np.float32)
+    n_y, n_x = expected.shape           # 3, 2
+    p = tmp_path / "m.dat"
+    p.write_bytes(expected.T.copy().tobytes())   # dosyadaki sira: [x][y]
+    got = collect_results.parse_bin(p, n_x, n_y)
+    assert got.shape == (n_y, n_x)
+    assert np.allclose(got, expected)
+
+
+def test_bin_boyut_uyusmazligi_valueerror(tmp_path):
+    """Dosyada baslik yok; tek dogrulama boyuttur. Sessizce yanlis
+    sekillendirmek matrisi cop yapardi."""
+    p = tmp_path / "m.dat"
+    p.write_bytes(np.zeros(5, dtype=np.float32).tobytes())
+    with pytest.raises(ValueError):
+        collect_results.parse_bin(p, 3, 3)
+
+
+def test_bin_tam_hassasiyet_korunur(tmp_path):
+    """.xpm 80 seviyeye yuvarlar; .dat yuvarlamaz."""
+    vals = np.array([[0.123456, 0.2345678], [0.3456789, 0.456789]],
+                    dtype=np.float32)
+    p = tmp_path / "m.dat"
+    p.write_bytes(vals.T.copy().tobytes())
+    got = collect_results.parse_bin(p, 2, 2)
+    assert np.allclose(got, vals, atol=0, rtol=1e-6)
