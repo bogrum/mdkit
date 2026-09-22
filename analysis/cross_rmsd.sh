@@ -83,6 +83,34 @@ _cross_rmsd_check_peers() {
     return 0
 }
 
+_cross_rmsd_annotate() {
+    # $1 = .xpm, $2 = gmx'in yazdigi .xvg, $3 = gecici dosya yolu
+    #
+    # gmx fit grubunu YALNIZCA .xvg'nin subtitle'ina yazar
+    # ("LIGAND_BB after lsq fit to RECEPTOR_BB"); .xpm'in kendi title'i
+    # sadece "LIGAND_BB RMSD matrix" der. O .xvg atildigi icin bilgi
+    # kayboluyordu ve figur NEYE FIT EDILDIGINI soyleyemiyordu.
+    #
+    # Satir .xpm'e ikinci bir yorum olarak tasinir. Boylece matris dosyasi
+    # kendi kendini aciklar ve Python tarafi gmx grup adlarini bilmek
+    # zorunda kalmaz -- yalnizca dosyada YAZANI gosterir. Alternatifi,
+    # cizim katmanina "RECEPTOR_BB" string'ini gommekti; bu, katmanlar
+    # arasi sozlesmeyi bozardi.
+    #
+    # Bulunamazsa dosyaya DOKUNULMAZ: eksik aciklama, bozuk matristen
+    # iyidir.
+    local xpm="$1" xvg="$2" tmp="$3" sub
+    [[ -s "$xpm" && -s "$xvg" ]] || return 0
+    sub="$(sed -n 's/^@[[:space:]]*subtitle[[:space:]]*"\(.*\)".*/\1/p' "$xvg" | head -1)"
+    [[ -n "$sub" ]] || return 0
+    awk -v s="$sub" '
+        !ins && /^static char/ { printf "/* subtitle:  \"%s\" */\n", s; ins = 1 }
+        { print }
+    ' "$xpm" > "$tmp" && mv -f "$tmp" "$xpm"
+    rm -f "$tmp"
+    return 0
+}
+
 _cross_rmsd_pairs() {
     # $1 = kompleks dizini, $2 = out_dir, $3 = gecici .xvg yolu.
     # Esler _cross_rmsd_check_peers tarafindan ZATEN dogrulandi.
@@ -121,6 +149,8 @@ _cross_rmsd_pairs() {
             echo "matris uretilmedi: cross_rmsd_${peer} (.xpm ve .dat birlikte gerekli)" >&2
             return 1
         }
+
+        _cross_rmsd_annotate "$out" "$tmp_xvg" "${tmp_xvg}.ann"
     done
     return 0
 }

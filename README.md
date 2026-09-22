@@ -352,6 +352,15 @@ kompleks basina bir isi haritasi izgarasi + bir denge egrisi cizer. Ilk ornegi
 | `.dat` (`gmx -bin`) | tam `float32` degerler | hicbir metadata -- baslik bile yok |
 
 Bu yuzden **ikisi de zorunlu cikti olarak ilan edilir**: tek baslarina eksiktirler.
+
+`.xpm`'in kendi `title`'i yalnizca NE olculdugunu soyler (`LIGAND_BB RMSD
+matrix`); NEYE FIT EDILDIGINI ise `gmx` sadece `-o` ile yazdigi `.xvg`'nin
+`subtitle`'ina koyar (`LIGAND_BB after lsq fit to RECEPTOR_BB`) ve o `.xvg`
+atilir. Eklenti bu satiri `.xpm`'e ikinci bir yorum olarak **tasir**; figurler
+onu gosterir. Boylece matris dosyasi kendi kendini aciklar ve cizim katmani gmx
+grup adlarini bilmek zorunda kalmaz -- yalnizca dosyada yazani gosterir.
+Alternatifi, `plot_results.py`'ye `RECEPTOR_BB` string'ini gommekti; bu,
+katmanlar arasi sozlesmeyi bozardi.
 Toplama katmani sekli ve eksenleri `.xpm`'den, degerleri `.dat`'tan alir. `.dat`
 bozuksa (boyut tutmuyorsa) uyari yazilir ve `.xpm` degerlerine donulur -- daha
 kaba, ama dogru bir yedek.

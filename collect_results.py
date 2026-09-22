@@ -29,6 +29,7 @@ XVG_AXIS = re.compile(r'@\s+(xaxis|yaxis)\s+label\s+"(.*)"')
 UNIT_IN_LABEL = re.compile(r"\(([^)]*)\)")
 
 XPM_TITLE = re.compile(r'/\*\s*title:\s*"(.*)"\s*\*/')
+XPM_SUBTITLE = re.compile(r'/\*\s*subtitle:\s*"(.*)"\s*\*/')
 XPM_LEGEND = re.compile(r'/\*\s*legend:\s*"(.*)"\s*\*/')
 XPM_AXIS = re.compile(r'/\*\s*([xy])-axis:\s*(.*?)\s*\*/')
 XPM_HEADER = re.compile(r'^"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)"')
@@ -97,6 +98,12 @@ def parse_xpm(path):
             # gmx buraya NEYIN olculdugunu yazar (or. "LIGAND_BB RMSD
             # matrix"). Figurde gosterilir; okuyucu aksi halde grafikten
             # ne oldugunu anlayamaz.
+            # 'subtitle' ONCE denenir: gmx'in yazdigi satir degil, eklentinin
+            # ekledigi satirdir ve HEM olculen HEM fit grubunu tasir.
+            m = XPM_SUBTITLE.search(line)
+            if m:
+                meta["subtitle"] = m.group(1)
+                continue
             m = XPM_TITLE.search(line)
             if m:
                 meta["title"] = m.group(1)
@@ -160,6 +167,7 @@ def parse_xpm(path):
     m = UNIT_IN_LABEL.search(meta.get("legend", ""))
     meta["unit"] = m.group(1) if m else ""
     meta.setdefault("title", "")
+    meta.setdefault("subtitle", "")
     return meta, values, x_ps, y_ps
 
 
@@ -365,7 +373,7 @@ def collect_matrix(xpm, cname, rep, reps, analysis, matrix_dir):
         values=values, x_ps=x_ps, y_ps=y_ps,
         unit=meta["unit"], complex=cname, replica_i=rep,
         replica_j=peer or "", analysis=analysis, output=xpm.name,
-        dt_ps=dt_ps, title=meta["title"],
+        dt_ps=dt_ps, title=meta["title"], subtitle=meta["subtitle"],
     )
     # Self-matriste kosegen TANIM GEREGI sifirdir ve min'i anlamsiz kilar;
     # tezde kullanilacak sayi capraz ciftin minimumudur.
