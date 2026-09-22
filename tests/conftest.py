@@ -102,6 +102,66 @@ def small_rep(tmp_path_factory):
     return d
 
 
+@pytest.fixture(scope="session")
+def small_pair(tmp_path_factory):
+    """Gercek veriden IKI replikali kucuk kopya (oturumda bir kez).
+
+    real_config tek replikalidir (REPS=(rep1)), yani cross_rmsd'nin -f2 dali
+    orada HIC kosmaz: yalnizca self-matris uretilir. Capraz dalin kendi
+    fixture'i olmadan, arac aslinda yapmak icin yazildigi seyi test etmemis
+    olurdu."""
+    if not (GMX_BIN.exists() and REAL_REP.exists()):
+        pytest.skip("gmx veya gercek veri yok")
+    src_cx = REAL_REP.parent
+    reps = [r for r in ["rep1", "rep2"] if (src_cx / r / "check_ref.pdb").exists()]
+    if len(reps) < 2:
+        pytest.skip("ikinci gercek replika yok")
+
+    root = tmp_path_factory.mktemp("small_pair") / "data"
+    for rep in reps:
+        d = root / "test1_PEPTIDE_A0201_pandora" / rep
+        d.mkdir(parents=True)
+        subprocess.run(
+            [
+                str(GMX_BIN), "trjconv",
+                "-s", str(src_cx / rep / "md_0_10.tpr"),
+                "-f", str(src_cx / rep / "traj_compact_center_dry.xtc"),
+                "-o", str(d / "traj_compact_center_dry.xtc"),
+                "-b", "0", "-e", "200",
+            ],
+            input="Protein\n", text=True, capture_output=True, check=True,
+        )
+        shutil.copy(src_cx / rep / "check_ref.pdb", d / "check_ref.pdb")
+        os.symlink(src_cx / rep / "md_0_10.tpr", d / "md_0_10.tpr")
+    return root, reps
+
+
+@pytest.fixture
+def pair_config(tmp_path, small_pair):
+    """small_pair'i iki replikali tek kompleks gibi gosteren config."""
+    root, reps = small_pair
+    cfg = tmp_path / "pair_config.sh"
+    cfg.write_text(
+        textwrap.dedent(
+            f"""\
+            DATA_ROOT="{root}"
+            GMX="{GMX_BIN}"
+            COMPLEX_GLOB="*_pandora"
+            REPS=({" ".join(reps)})
+            TRAJ_NAME="traj_compact_center_dry.xtc"
+            TPR_NAME="md_0_10.tpr"
+            REF_NAME="check_ref.pdb"
+            RESULTS_DIR="{tmp_path}/pair_results"
+            PYTHON="{sys.executable}"
+            CHAIN_RECEPTOR="A"
+            CHAIN_AUX="B"
+            CHAIN_LIGAND="C"
+            """
+        )
+    )
+    return cfg, root, reps
+
+
 @pytest.fixture
 def real_config(tmp_path, small_rep):
     """small_rep'i tek replikali tek kompleks gibi gosteren config + veri agaci.

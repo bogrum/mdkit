@@ -191,3 +191,42 @@ def test_gercek_capraz_matris(mdkit, real_config):
     # ile gmx'in GERCEK yazma sirasinin uyustugunun kaniti -- fixture'lar bunu
     # gosteremez, cunku fixture'i da biz yaziyoruz.
     assert np.allclose(np.diag(values), 0.0, atol=1e-3)
+
+
+@needs_gmx
+def test_gercek_capraz_dal_transpoze_tutarli(mdkit, pair_config):
+    """-f2 dalinin GERCEK regresyonu: rep1'in rep2-matrisi, rep2'nin
+    rep1-matrisinin TRANSPOZESI olmalidir.
+
+    Bu ozdeslik ancak (a) piksel satirlari y ekseninin tersi sirada okunursa
+    VE (b) genislik=x=-f, yukseklik=y=-f2 yorumu dogruysa saglanir. Ikisinden
+    biri yanlis olsa da self-matris hala simetrik ve kosegeni sifir cikardi --
+    yani self-matris bu iki hatayi GOREMEZ.
+    """
+    cfg, root, reps = pair_config
+    r = subprocess.run(
+        ["bash", str(mdkit / "run_analysis.sh"), "-c", str(cfg),
+         "-a", "cross_rmsd", "-b", "0", "--all", str(root)],
+        capture_output=True, text=True,
+        env={**os.environ, "CROSS_RMSD_DT": "50"},
+    )
+    assert r.returncode == 0, r.stderr
+
+    sys.path.insert(0, str(mdkit))
+    import collect_results
+
+    cx = next(Path(root).glob("*_pandora"))
+    a, b = reps[0], reps[1]
+    _m1, c_ab, _x, _y = collect_results.parse_xpm(
+        cx / a / "analysis" / f"cross_rmsd_{b}.xpm")   # -f a, -f2 b
+    _m2, c_ba, _x, _y = collect_results.parse_xpm(
+        cx / b / "analysis" / f"cross_rmsd_{a}.xpm")   # -f b, -f2 a
+    assert np.allclose(c_ab, c_ba.T, atol=1e-6), (
+        f"max fark {np.abs(c_ab - c_ba.T).max()}")
+
+    # Capraz matrisin kosegeni self-matrisin aksine SIFIR DEGILDIR: ayni anda
+    # farkli replikalar farkli konformasyonlardadir.
+    _m3, self_a, _x, _y = collect_results.parse_xpm(
+        cx / a / "analysis" / f"cross_rmsd_{a}.xpm")
+    assert np.allclose(np.diag(self_a), 0.0, atol=1e-3)
+    assert not np.allclose(np.diag(c_ab), 0.0, atol=1e-3)
