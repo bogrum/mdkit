@@ -13,7 +13,7 @@ gozetimsiz kosup sonra hepsini birlikte gormek icin yazildi.
 ### Boru hatti
 
 ```
-config.sh ──► run_analysis.sh ──► analysis/<ad>.sh ──► rep*/analysis/*.{xvg,xpm}
+config.sh ──► run_analysis.sh ──► analysis/<ad>.sh ──► rep*/analysis/*.{xvg,xpm,dat}
                   │                    (eklenti)              │
                   │                                           ▼
                   └──► results/run_log.csv          collect_results.py
@@ -68,7 +68,7 @@ bilmez.
    olur; sonraki replika ve sonraki kompleks normal devam eder.
 
 Sonra ayri bir adimda `collect_results.py` butun `.xvg`'leri iki uzun-format
-CSV'ye, butun `.xpm`'leri de `results/matrices/*.npz` + `matrix_summary.csv`
+CSV'ye, butun `.xpm`/`.dat` ciftlerini de `results/matrices/*.npz` + `matrix_summary.csv`
 haline indirger; `plot_results.py` de yalnizca `results/` altini okuyarak cizer.
 
 ### Diskte ne nereye yazilir
@@ -83,7 +83,8 @@ $DATA_ROOT/
 │   └── analysis/
 │       ├── index.ndx                   (bir kez kurulur)
 │       ├── *.xvg                       (ham 1B ciktilar, trajektorinin yaninda)
-│       └── *.xpm                       (ham 2B ciktilar/matrisler)
+│       ├── *.xpm                       (ham 2B ciktilar: eksenler + birim)
+│       └── *.dat                       (ayni matrisin tam float32 degerleri)
 └── results/
     ├── run_log.csv
     ├── timeseries_long.csv
@@ -94,6 +95,7 @@ $DATA_ROOT/
         ├── per_complex/<kompleks>_<cikti>.png
         ├── mean_sd/<kompleks>_<cikti>.png
         ├── matrix/<kompleks>_<analiz>.png
+        ├── matrix/<kompleks>_<analiz>_equilibrium.png
         └── compare_<cikti>.png
 ```
 
@@ -236,7 +238,7 @@ matrisler ayri bir urundur ve `cross_rmsd` tek basina kosulmus olabilir.
 | `--per-complex` | `plots/per_complex/<kompleks>_<cikti>.png` | *Bu simulasyon guvenilir mi?* Kompleks basina tek figur; rep1/rep2/rep3 ayri renkte ust uste. Replikalar ayrisiyorsa yakinsama yok demektir. |
 | `--mean-sd` | `plots/mean_sd/<kompleks>_<cikti>.png` | *Yayina/teze ne koyacagim?* Replika ortalamasi + ±SD seridi. Replikalar arasi sacilim belirsizlik bandi olarak gosterilir. |
 | `--compare` | `plots/compare_<cikti>.png` | *Hangi peptidler kararli?* Tum kompleksler tek panelde, **medyana gore artan** sirali boxplot. Her kutu bir kompleks, kutu icindeki noktalar replikalarin ortalamalari. |
-| `--matrix` | `plots/matrix/<kompleks>_<analiz>.png` | *Replikalar ayni konformasyonlari mi geziyor?* Kompleks basina N x N isi haritasi izgarasi, ortak renk skalasiyla. Kosegende self-matrisler (tek replika icindeki metastabil durumlar), kosegen disinda capraz ciftler. Koyu bir capraz panel, iki replikanin AYNI bolgeyi ziyaret ettigini soyler. |
+| `--matrix` | `plots/matrix/<kompleks>_<analiz>.png` ve `..._equilibrium.png` | *Replikalar ayni konformasyonlari mi geziyor?* Kompleks basina N x N isi haritasi izgarasi, ortak renk skalasiyla. Kosegende self-matrisler (tek replika icindeki metastabil durumlar), kosegen disinda capraz ciftler. Koyu bir capraz panel, iki replikanin AYNI bolgeyi ziyaret ettigini soyler. Yaninda **denge egrisi**: her frame'in tum es frame'lere ortalama uzakligi; egri duzlestiginde replika yeni bolge bulmayi birakmistir. Replikalar uc uca eklenmez, ortak zaman ekseninde ust uste cizilir. |
 
 `--compare` varsayilan olarak `rmsd_pep_on_mhc.xvg`'yi kullanir (ana metrik);
 `--compare-output` ile baska bir cikti secilebilir.
@@ -337,10 +339,22 @@ kesiften duser (yalnizca `-a _ad` ile acikca secilebilirler).
 
 ### `matrix` — 2B ciktilar
 
-`ANALYSIS_KIND="matrix"` ilan eden bir analiz `.xpm` uretir; `collect_results.py`
-bunlari `results/matrices/<kompleks>_<replika>_<cikti>.npz` dosyalarina ve
+`ANALYSIS_KIND="matrix"` ilan eden bir analiz her matris icin **iki** dosya
+uretir; `collect_results.py` bunlari
+`results/matrices/<kompleks>_<replika>_<cikti>.npz` dosyalarina ve
 `results/matrix_summary.csv` ozetine cevirir, `plot_results.py --matrix` de
-kompleks basina bir isi haritasi izgarasi cizer. Ilk ornegi `cross_rmsd`.
+kompleks basina bir isi haritasi izgarasi + bir denge egrisi cizer. Ilk ornegi
+`cross_rmsd`.
+
+| Dosya | Tasidigi | Tasimadigi |
+|---|---|---|
+| `.xpm` (`gmx -m`) | eksen zamanlari, birim, legend | tam degerler (80 seviyeye yuvarlanmis) |
+| `.dat` (`gmx -bin`) | tam `float32` degerler | hicbir metadata -- baslik bile yok |
+
+Bu yuzden **ikisi de zorunlu cikti olarak ilan edilir**: tek baslarina eksiktirler.
+Toplama katmani sekli ve eksenleri `.xpm`'den, degerleri `.dat`'tan alir. `.dat`
+bozuksa (boyut tutmuyorsa) uyari yazilir ve `.xpm` degerlerine donulur -- daha
+kaba, ama dogru bir yedek.
 
 Matrisler uzun-format CSV'ye **girmez**: 451x451'lik 315 matris ~64 milyon satir
 ederdi. `timeseries_long.csv`/`profile_long.csv` icin dogru olan bicim 2B veri
@@ -354,11 +368,16 @@ icin degil.
 
 #### Bilinen sinirlar
 
-**Degerler 80 seviyeye yuvarlanmistir.** `.xpm` surekli degerleri `-nlevels`
-(varsayilan 80) renk seviyesine indirger. Isi haritasi icin fazlasiyla yeterli,
-ama `matrix_summary.csv`'deki `min`/`mean`/`max` sayilari da bu cozunurluktedir.
-Tam degerler gerekirse `gmx rms -bin` ham binary dump uretir; arac bunu su an
-kullanmaz.
+**`min`/`mean`/`max` SEYRELTMEYE baglidir.** Ayni trajektoriden farkli `-dt`
+farkli sayilar verir -- daha sik ornekleme daha fazla uc deger yakalar. Bu yuzden
+`matrix_summary.csv` kullanilan seyreltmeyi `dt_ps` kolonunda tasir; bu sayilari
+bir tabloya koyarken `dt`'yi de yazin.
+
+**Capraz ciftin iki yonu son basamaklarda ayrisir.** `rep1 x rep2` ile
+`rep2 x rep1` matematiksel olarak birbirinin transpozesidir, ama `gmx` cifti fit
+sirasi ters cevrilmis hesapladigi icin `float32` yuvarlamasi farkli birikir:
+gercek veride olculen sapma ~`1e-6` nm (`float32` eps ~`1.2e-7`). Self-matris
+boyle bir sapma icermez -- TAM simetriktir ve kosegeni TAM sifirdir.
 
 **`-r/--reps` ile kisitlanmis kosu eksik matris uretir.** Cikti manifestosu
 `config.sh`'teki `REPS`'ten turetilir, `-r` ise onu yalnizca kosu icin ezer.
