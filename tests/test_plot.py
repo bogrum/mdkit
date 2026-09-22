@@ -768,3 +768,51 @@ def test_profile_compare_replikalar_once_ortalanir():
     ham = df[(df.kutu == "orta") & (df["complex"] == "top0")]["value"].mean()
     ort = out[(out.kutu == "orta") & (out["complex"] == "top0")]["value"].iloc[0]
     assert ort == pytest.approx(ham)
+
+
+def test_profile_length_summary():
+    """Grup basina profil uzunlugu dagilimi; HER ZAMAN hesaplanir."""
+    a = _profile_df(n_per_group=2, length=9)
+    b = _profile_df(n_per_group=1, length=11)
+    b["complex"] = b["complex"] + "x"
+    df = pd.concat([a, b], ignore_index=True)
+    df["grup"] = np.where(df["complex"].str.startswith("top"), "TRUE", "FALSE")
+    out = dict((lbl, rest) for lbl, *rest in
+               plot_results.profile_length_summary(df))
+    # her grupta 2 adet 9-mer + 1 adet 11-mer -> medyan 9, aralik 9-11, n=3
+    assert out["TRUE"] == [9.0, 9, 11, 3]
+    assert out["FALSE"] == [9.0, 9, 11, 3]
+
+
+def test_profile_length_summary_uzunlugu_kolonlardan_turetir():
+    """n_res = residue - residue_from_end; ayri bir groupby gerekmez."""
+    # _profile_df iki grup uretir (top0 + last0); ikisi de TRUE'ya atandi
+    df = _profile_df(n_per_group=1, length=8)
+    df["grup"] = "TRUE"
+    (_lbl, med, lo, hi, n), = plot_results.profile_length_summary(df)
+    assert (med, lo, hi, n) == (8.0, 8, 8, 2)
+
+
+def test_profile_length_note_metni():
+    df = _profile_df(n_per_group=2, length=9)
+    df["grup"] = np.where(df["complex"].str.startswith("top"), "TRUE", "FALSE")
+    s = plot_results.profile_length_note(df)
+    assert "profil uzunlugu" in s
+    assert "TRUE: medyan 9 (9-9, n=2)" in s
+    assert "FALSE: medyan 9 (9-9, n=2)" in s
+
+
+def test_profile_compare_figurde_uzunluk_notu_var(tmp_path, monkeypatch):
+    """Not ESIGE baglanmaz: uzunluklar ayni olsa da gosterilir. Esik
+    koymak, tam esikte olan bir vakanin sessizce gecmesi demektir."""
+    seen = []
+    orig = plot_results.plt.Axes.set_title
+
+    def spy(self, t, *a, **k):
+        seen.append(t)
+        return orig(self, t, *a, **k)
+
+    monkeypatch.setattr(plot_results.plt.Axes, "set_title", spy)
+    plot_results.plot_profile_compare(_profile_df(), tmp_path,
+                                      [("top", "TRUE"), ("last", "FALSE")])
+    assert any("profil uzunlugu" in s for s in seen), seen

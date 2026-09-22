@@ -576,6 +576,37 @@ def group_of(complex_name, groups):
     return None
 
 
+def profile_length_summary(g):
+    """Grup basina profil uzunlugu: [(etiket, medyan, min, max, n_kompleks)].
+
+    Uzunluk kolonlardan turetilir: `residue_from_end = residue - n_res`
+    oldugu icin `n_res = residue - residue_from_end`. Ayri bir groupby
+    gerekmez.
+    """
+    t = g.assign(_n=g["residue"] - g["residue_from_end"])
+    per_cx = t.groupby(["grup", "complex"])["_n"].first()
+    out = []
+    for lbl, s in per_cx.groupby(level=0):
+        out.append([lbl, float(s.median()), int(s.min()), int(s.max()),
+                    int(s.size)])
+    return out
+
+
+def profile_length_note(g):
+    """Figure yazilacak uzunluk dagilimi satiri.
+
+    HER ZAMAN gosterilir, bir esige BAGLANMAZ. Konuma dayali
+    karsilastirmalarda uzunluk en sik karisan degiskendir ve uclardan
+    sayilan konumlar (PO, PO-1) ozellikle duyarlidir: "son residue" tanim
+    geregi sistemin BITTIGI yerdir, ayni residue degil. Bir esik koymak
+    ("medyanlar X'ten fazla farkliysa uyar") tam esikte olan bir vakanin
+    sessizce gecmesi demek olurdu; karar okuyucunun.
+    """
+    parcalar = [f"{lbl}: medyan {med:g} ({lo}-{hi}, n={n})"
+                for lbl, med, lo, hi, n in profile_length_summary(g)]
+    return "profil uzunlugu -- " + "  |  ".join(parcalar)
+
+
 def profile_complex_means(g, conv=1.0):
     """(kutu, grup, kompleks) basina tek deger -- replikalar ORTALANIR.
 
@@ -672,7 +703,7 @@ def plot_profile_compare(pr, out_dir, groups=()):
 
             ax.set_xticks(range(len(mevcut)))
             ax.set_xticklabels(mevcut)
-            ax.set_xlabel("Konum (peptid ucundan sayilarak)")
+            ax.set_xlabel("Konum (zincirin uclarindan sayilarak)")
             ax.set_ylabel(ylabel)
             ax.set_ylim(top=ust * 1.16)
             ax.spines[["top", "right"]].set_visible(False)
@@ -683,7 +714,8 @@ def plot_profile_compare(pr, out_dir, groups=()):
                 f"{Path(output).stem} \u2014 konuma gore gruplar\n"
                 f"{test_adi}; {len(mevcut)} konum test edildi, "
                 f"Bonferroni esigi 0.05/{len(mevcut)} = "
-                f"{0.05 / len(mevcut):.3f}", fontsize=10)
+                f"{0.05 / len(mevcut):.3f}\n"
+                f"{profile_length_note(g)}", fontsize=9.5)
             ax.legend(handles=[
                 mpatches.Patch(fc=GROUP_PALETTE[j % len(GROUP_PALETTE)],
                                alpha=0.75, label=lbl)
