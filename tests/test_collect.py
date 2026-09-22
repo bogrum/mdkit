@@ -350,3 +350,71 @@ def test_summary_csv_yazilir(fake_dataset, fake_config, tmp_path):
         rows = list(csv.DictReader(f))
     assert rows, r.stdout
     assert set(rows[0]) == set(collect_results.MX_FIELDS)
+
+
+def write_matrix_bin(fake_dataset, name, values):
+    """MATRIX_XPM'in yanina ayni matrisin tam hassasiyetli .dat'ini yazar.
+
+    Dosya duzeni gmx'inki: BASLIKSIZ float32, [x][y] sirasinda (spec olcumu).
+    """
+    values = np.asarray(values, dtype=np.float32)
+    for cx in fake_dataset.iterdir():
+        if not cx.name.endswith("_pandora"):
+            continue
+        for rep in ["rep1", "rep2", "rep3"]:
+            adir = cx / rep / "analysis"
+            adir.mkdir(parents=True, exist_ok=True)
+            (adir / name).write_bytes(values.T.copy().tobytes())
+
+
+# MATRIX_XPM ile ayni matris, ama .xpm'in 80 seviyesine SIGMAYAN degerlerle.
+EXACT = [[0.0, 0.512345, 0.987654],
+         [0.512345, 0.0, 0.512345],
+         [0.987654, 0.512345, 0.0]]
+
+
+def test_dat_varsa_degerler_ondan_alinir(fake_dataset, tmp_path):
+    """.xpm yuvarlanmis, .dat tam. Toplama .dat'i tercih etmeli."""
+    write_outputs(fake_dataset, {"cross_rmsd_rep2.xpm": MATRIX_XPM})
+    write_matrix_bin(fake_dataset, "cross_rmsd_rep2.dat", EXACT)
+    manifest = {"cross_rmsd_rep2.xpm": ("cross_rmsd", "matrix")}
+    mdir = tmp_path / "m"
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=mdir)
+    d = np.load(mdir / "last1_rep1_cross_rmsd_rep2.npz", allow_pickle=False)
+    assert np.allclose(d["values"], EXACT, atol=1e-6)
+    rec = [r for r in mx if r["complex"] == "last1"
+           and r["replica_i"] == "rep1"][0]
+    assert rec["max"] == pytest.approx(0.987654, abs=1e-6)
+
+
+def test_dat_boyutu_tutmazsa_xpme_donulur(fake_dataset, capsys, tmp_path):
+    """Bozuk .dat toplamayi dusurmemeli; .xpm zaten dogru bir yedektir."""
+    write_outputs(fake_dataset, {"cross_rmsd_rep2.xpm": MATRIX_XPM})
+    write_matrix_bin(fake_dataset, "cross_rmsd_rep2.dat", [[1.0, 2.0]])
+    manifest = {"cross_rmsd_rep2.xpm": ("cross_rmsd", "matrix")}
+    mdir = tmp_path / "m"
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=mdir)
+    assert len(mx) == 6, "kosu devam etmeliydi"
+    err = capsys.readouterr().err
+    assert "cross_rmsd_rep2.dat" in err
+    d = np.load(mdir / "last1_rep1_cross_rmsd_rep2.npz", allow_pickle=False)
+    assert d["values"].max() == pytest.approx(1.0)   # .xpm degerleri
+
+
+def test_dt_ps_eksen_araliginden_turetilir(fake_dataset, tmp_path):
+    """dt, katmanlar arasinda tasinmaz -- veriden geri okunur.
+
+    Onemli, cunku min/mean/max SEYRELTMEYE BAGLIDIR: ayni trajektoriden
+    farkli -dt farkli sayilar verir. Sayinin kendi saglamasini tasimasi
+    gerekir."""
+    write_outputs(fake_dataset, {"cross_rmsd_rep2.xpm": MATRIX_XPM})
+    manifest = {"cross_rmsd_rep2.xpm": ("cross_rmsd", "matrix")}
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=tmp_path / "m")
+    assert "dt_ps" in collect_results.MX_FIELDS
+    assert mx[0]["dt_ps"] == pytest.approx(100.0)   # x-axis: 0 100 200
