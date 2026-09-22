@@ -418,3 +418,59 @@ def test_dt_ps_eksen_araliginden_turetilir(fake_dataset, tmp_path):
         matrix_dir=tmp_path / "m")
     assert "dt_ps" in collect_results.MX_FIELDS
     assert mx[0]["dt_ps"] == pytest.approx(100.0)   # x-axis: 0 100 200
+
+
+def test_self_orani_hesaplanir():
+    """'Replikalar ayni konformasyonel alani mi ornekliyor?' sorusunun
+    NICEL cevabi. 1'e yakin = evet; buyudukce = hayir."""
+    rows = [
+        {"complex": "c", "analysis": "cross_rmsd",
+         "replica_i": "rep1", "replica_j": "rep1", "mean": 1.0},
+        {"complex": "c", "analysis": "cross_rmsd",
+         "replica_i": "rep2", "replica_j": "rep2", "mean": 3.0},
+        {"complex": "c", "analysis": "cross_rmsd",
+         "replica_i": "rep1", "replica_j": "rep2", "mean": 4.0},
+    ]
+    collect_results.add_self_ratio(rows)
+    # self satirlar tanim geregi 1.0
+    assert rows[0]["mean_vs_self"] == pytest.approx(1.0)
+    assert rows[1]["mean_vs_self"] == pytest.approx(1.0)
+    # capraz: 4.0 / ((1.0 + 3.0) / 2) = 2.0
+    assert rows[2]["mean_vs_self"] == pytest.approx(2.0)
+
+
+def test_self_orani_referanssiz_satirda_bos():
+    """Eslesmeyen bir matriste (replica_j bos) oran UYDURULMAZ."""
+    rows = [
+        {"complex": "c", "analysis": "dssp",
+         "replica_i": "rep1", "replica_j": "", "mean": 2.0},
+    ]
+    collect_results.add_self_ratio(rows)
+    assert rows[0]["mean_vs_self"] == ""
+
+
+def test_self_orani_farkli_kompleksleri_karistirmaz():
+    rows = [
+        {"complex": "a", "analysis": "cross_rmsd",
+         "replica_i": "rep1", "replica_j": "rep1", "mean": 1.0},
+        {"complex": "b", "analysis": "cross_rmsd",
+         "replica_i": "rep1", "replica_j": "rep1", "mean": 9.0},
+        {"complex": "b", "analysis": "cross_rmsd",
+         "replica_i": "rep1", "replica_j": "rep2", "mean": 9.0},
+    ]
+    collect_results.add_self_ratio(rows)
+    assert rows[2]["mean_vs_self"] == ""   # b/rep2'nin self'i yok
+
+
+def test_mean_vs_self_kolonu_csvde(fake_dataset, tmp_path):
+    write_outputs(fake_dataset, {"cross_rmsd_rep1.xpm": MATRIX_XPM,
+                                 "cross_rmsd_rep2.xpm": MATRIX_XPM})
+    manifest = {"cross_rmsd_rep1.xpm": ("cross_rmsd", "matrix"),
+                "cross_rmsd_rep2.xpm": ("cross_rmsd", "matrix")}
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=tmp_path / "m")
+    assert "mean_vs_self" in collect_results.MX_FIELDS
+    selfs = [r for r in mx if r["replica_i"] == r["replica_j"]]
+    assert selfs and all(r["mean_vs_self"] == pytest.approx(1.0)
+                         for r in selfs)

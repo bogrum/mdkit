@@ -94,8 +94,9 @@ $DATA_ROOT/
     └── plots/
         ├── per_complex/<kompleks>_<cikti>.png
         ├── mean_sd/<kompleks>_<cikti>.png
-        ├── matrix/<kompleks>_<analiz>.png
+        ├── matrix/<kompleks>_<analiz>.png            (kompleks basina skala)
         ├── matrix/<kompleks>_<analiz>_equilibrium.png
+        ├── matrix_global/<kompleks>_<analiz>.png     (ortak skala)
         └── compare_<cikti>.png
 ```
 
@@ -392,6 +393,39 @@ boyle bir sapma icermez -- TAM simetriktir ve kosegeni TAM sifirdir.
 `config.sh`'teki `REPS`'ten turetilir, `-r` ise onu yalnizca kosu icin ezer.
 Sessiz bir yanlislik degil: eksik dosya toplanmaz, sonraki tam kosu eksikligi
 gorup yeniden uretir.
+
+**`matrix_summary.csv`'deki `mean_vs_self` kolonu**, "replikalar ayni
+konformasyonel alani mi ornekliyor?" sorusunun nicel cevabidir:
+
+    mean_vs_self = mean / ((self_i + self_j) / 2)
+
+1'e yakin = evet (capraz uzaklik, replika ICI uzakliktan farkli degil);
+buyudukce = hayir. Isi haritasina bakip goz karariyla karar vermenin yerini
+alir -- renk skalasi kompleksten komplekse degistigi icin goz karari zaten
+guvenilmezdir. Oran CIFT basinadir: gercek veride heterojenligin cogunlukla
+komplekse yayilmadigi, TEK bir replika ciftinden geldigi gorulur. Self
+satirlarda tanim geregi 1.0; referans self matrisi yoksa bos birakilir.
+Self ortalamalari kosegen haric hesaplandigi icin payda bir miktar buyuktur,
+yani oran muhafazakardir.
+
+**Renk skalasi IKI sette birden uretilir.** `plots/matrix/` her kompleksi
+KENDI araligiyla cizer (kompleks ICI kontrast korunur); `plots/matrix_global/`
+ayni analizin butun komplekslerini ORTAK bir aralikla cizer (kompleksler ARASI
+kiyas mumkun olur). Ikisi de gerekli, cunku takas gercek: `top2`'nin araligi
+0-4.4 A, `last10`'unki 0-14.9 A; ortak skalada `top2` neredeyse duz cikar ama
+"bu kompleks digerlerine gore dusuk" bir bakista gorunur. Her iki setin de
+BASLIGINDA kullanilan aralik yazar -- yazmasaydi okuyucu renkleri kompleksler
+arasi kiyaslamaya kalkardi ve yanilirdi (olculdu: `top1`'de "yesil" 2.9 A,
+`last10`'da 8.9 A). Tek kompleksli bir (analiz, birim) grubunda ortak skala
+kendi skalasiyla ayni oldugu icin ikinci set yazilmaz.
+
+**Denge egrisinin penceresi SABIT bir suredir** (`--matrix-smooth-ns`,
+varsayilan 1.0 ns; `0` kapatir). Serinin oranina baglanmis bir pencere
+(`n/20` gibi) filtrenin kesme frekansini kosu uzunluguna baglar: ayni sistem
+20 ns yerine 100 ns kosuldugunda ayni surec farkli duzlestirilir. 1.0 ns,
+gercek veride olculen otokorelasyon surelerinin (`tau_int` 0.5-7.8 ns, medyan
+~3.9 ns) hemen hepsinin altinda kalir. Pencere ORTALANIR ve ham egri her zaman
+figurde kalir.
 
 **DSSP gibi farkli semantikli 2B ciktilar** (residue x zaman) bu izgara
 ciziminden faydalanmaz; onlar icin ayri bir cizim bicimi gerekir. Toplama
