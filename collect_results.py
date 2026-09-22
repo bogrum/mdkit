@@ -38,7 +38,7 @@ TS_FIELDS = ["complex", "replica", "analysis", "output", "series",
 PR_FIELDS = ["complex", "replica", "analysis", "output", "series",
              "residue", "value", "unit"]
 MX_FIELDS = ["complex", "replica_i", "replica_j", "analysis", "output",
-             "n_x", "n_y", "min", "mean", "max", "unit"]
+             "n_x", "n_y", "dt_ps", "min", "mean", "max", "unit"]
 
 
 def parse_xvg(path):
@@ -197,6 +197,25 @@ def read_manifest(config):
     return manifest
 
 
+def parse_bin(path, n_x, n_y):
+    """gmx rms -bin ham dump'ini (n_y, n_x) float32 matrise cevirir.
+
+    Duzen GROMACS 2025.4'te OLCULDU: dosya BASLIKSIZDIR, float32'dir ve
+    [x][y] sirasinda yazilir -- yani .xpm'in TRANSPOZESI. .xpm'den farkli
+    olarak satir cevirme (rows[::-1]) GEREKMEZ; cevirmek matrisi bozar.
+
+    Baslik olmadigi icin boyutlar disaridan gelir (.xpm'den) ve tek
+    dogrulama dosya boyutudur: yanlis sekillendirilen bir matris sessizce
+    cop olurdu.
+    """
+    raw = np.fromfile(path, dtype=np.float32)
+    if raw.size != n_x * n_y:
+        raise ValueError(
+            f"{path.name}: {raw.size} deger var, {n_x}x{n_y}={n_x * n_y} bekleniyordu"
+        )
+    return raw.reshape(n_x, n_y).T.copy()
+
+
 def peer_replica(output_name, reps):
     """'cross_rmsd_rep2.xpm' -> 'rep2'; eslesme yoksa None.
 
@@ -313,6 +332,22 @@ def collect_matrix(xpm, cname, rep, reps, analysis, matrix_dir):
     Matrisler uzun-format CSV'ye GIRMEZ: 451x451'lik 315 matris ~64 milyon
     satir ederdi. 1D veri icin dogru olan bicim 2B icin degil."""
     meta, values, x_ps, y_ps = parse_xpm(xpm)
+
+    # .xpm degerleri 80 renk seviyesine yuvarlanmistir. Kardes .dat ayni
+    # matrisin ham float32 halidir; varsa DEGERLER ondan alinir. Eksenler,
+    # birim ve sekil yine .xpm'den gelir -- .dat'ta baslik bile yoktur.
+    dat = xpm.with_suffix(".dat")
+    if dat.is_file():
+        try:
+            values = parse_bin(dat, len(x_ps), len(y_ps))
+        except ValueError as exc:
+            # .xpm dogru bir yedektir, yalnizca daha kaba. Toplamayi
+            # dusurmek 105 dizinlik kosuyu tek bozuk dosyaya feda ederdi.
+            print(f"mdkit: {dat.name} kullanilamadi, .xpm degerlerine "
+                  f"donuldu ({exc})", file=sys.stderr)
+
+    # dt katmanlar arasinda tasinmaz, eksen araligindan geri okunur.
+    dt_ps = float(x_ps[1] - x_ps[0]) if len(x_ps) > 1 else ""
     peer = peer_replica(xpm.name, reps)
     matrix_dir.mkdir(parents=True, exist_ok=True)
     out = matrix_dir / f"{cname}_{rep}_{xpm.stem}.npz"
@@ -321,6 +356,7 @@ def collect_matrix(xpm, cname, rep, reps, analysis, matrix_dir):
         values=values, x_ps=x_ps, y_ps=y_ps,
         unit=meta["unit"], complex=cname, replica_i=rep,
         replica_j=peer or "", analysis=analysis, output=xpm.name,
+        dt_ps=dt_ps,
     )
     # Self-matriste kosegen TANIM GEREGI sifirdir ve min'i anlamsiz kilar;
     # tezde kullanilacak sayi capraz ciftin minimumudur.
@@ -333,6 +369,7 @@ def collect_matrix(xpm, cname, rep, reps, analysis, matrix_dir):
         "complex": cname, "replica_i": rep, "replica_j": peer or "",
         "analysis": analysis, "output": xpm.name,
         "n_x": int(values.shape[1]), "n_y": int(values.shape[0]),
+        "dt_ps": dt_ps,
         "min": float(sample.min()), "mean": float(sample.mean()),
         "max": float(sample.max()), "unit": meta["unit"],
     }

@@ -324,12 +324,136 @@ def load_matrices(results_dir):
     return groups
 
 
-def plot_matrix(results_dir, out_dir):
+def equilibrium_curves(recs):
+    """rep_i -> (x_ps, egri). Egri: rep_i'nin her frame'inin TUM eslerin
+    TUM frame'lerine ortalama uzakligi.
+
+    Matris duzeni [y=es frame, x=kendi frame] oldugu icin esler axis=0'da
+    yigilir ve sonuc kendi frame sayisi kadar uzunluktadir. Bu, uc replikayi
+    uc uca ekleyip 3Nx3N matriste satir ortalamasi almanin karsiligidir --
+    ama replikalar burada ORTAK bir zaman eksenine oturur, uc uca eklenmez,
+    yani dogrudan karsilastirilabilirler.
+
+    Egri duzlestiginde replika yeni konformasyonel bolge bulmayi birakmis
+    demektir; denge argumani icin isi haritasindan daha okunakli.
+    """
+    by_i = {}
+    for r in recs:
+        by_i.setdefault(r["replica_i"], []).append(r)
+
+    curves = {}
+    for rep_i, rs in by_i.items():
+        widths = {int(r["values"].shape[1]) for r in rs}
+        if len(widths) != 1:
+            # Yigmak sessizce yanlis olurdu: ayni replikanin matrisleri ayni
+            # kendi-frame sayisina sahip OLMALI.
+            print(f"denge egrisi atlandi ({rep_i}): kendi frame sayisi "
+                  f"matrisler arasinda tutmuyor {sorted(widths)}",
+                  file=sys.stderr)
+            continue
+        stack = np.concatenate([r["values"] for r in rs], axis=0)
+        curves[rep_i] = (rs[0]["x_ps"], stack.mean(axis=0))
+    return curves
+
+
+def rolling_mean(y, window):
+    """(baslangic_indeksi, ortalamalar). Pencere ORTALANIR.
+
+    Uc noktalari pencerenin SONUNA baglamak (x[window-1:]) egriyi yarim
+    pencere kadar saga kaydirir ve "ne zaman dengelendi" sorusunu sistematik
+    olarak GEC cevaplar. mode='same' ise kenarlari sifirla doldurup uclari
+    asagi ceker; bu yuzden 'valid' + ortalanmis indeks.
+    """
+    if window < 1 or len(y) < window:
+        return 0, np.asarray([], dtype=float)
+    vals = np.convolve(y, np.ones(window) / window, mode="valid")
+    return (window - 1) // 2, vals
+
+
+def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
     """Kompleks basina N x N isi haritasi izgarasi, ORTAK renk skalasiyla.
 
     Ortak skala sart: panel basina ayri skala, farkli replika ciftlerini
     gorsel olarak karsilastirilamaz kilardi -- bu figurun tek amaci o
     karsilastirma."""
+    rows = sorted({r["replica_j"] for r in recs})
+    cols = sorted({r["replica_i"] for r in recs})
+    by_cell = {(r["replica_i"], r["replica_j"]): r for r in recs}
+
+    vmin = min(float(r["values"].min()) for r in recs) * conv
+    vmax = max(float(r["values"].max()) for r in recs) * conv
+
+    fig, axes = plt.subplots(
+        len(rows), len(cols), squeeze=False,
+        figsize=(2.6 * len(cols) + 1.6, 2.6 * len(rows)),
+        sharex=True, sharey=True,
+    )
+    try:
+        im = None
+        for ri, rep_j in enumerate(rows):
+            for ci, rep_i in enumerate(cols):
+                ax = axes[ri][ci]
+                rec = by_cell.get((rep_i, rep_j))
+                if rec is None:
+                    ax.set_axis_off()
+                    continue
+                x, y = rec["x_ps"], rec["y_ps"]
+                im = ax.imshow(
+                    rec["values"] * conv, origin="lower", aspect="auto",
+                    vmin=vmin, vmax=vmax, cmap=MATRIX_CMAP,
+                    extent=[x[0] * PS_TO_NS, x[-1] * PS_TO_NS,
+                            y[0] * PS_TO_NS, y[-1] * PS_TO_NS],
+                )
+                if ri == len(rows) - 1:
+                    ax.set_xlabel(f"{rep_i} (ns)")
+                if ci == 0:
+                    ax.set_ylabel(f"{rep_j} (ns)")
+        if im is not None:
+            fig.colorbar(im, ax=axes, label=f"RMSD ({ulabel})",
+                         fraction=0.046, pad=0.02)
+        fig.suptitle(f"{cx} \u2014 {analysis}")
+        fig.savefig(target / f"{cx}_{analysis}.png", dpi=150,
+                    bbox_inches="tight")
+    finally:
+        plt.close(fig)
+
+
+def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel):
+    """Replika basina denge egrisi, ortak zaman ekseninde."""
+    curves = equilibrium_curves(recs)
+    if not curves:
+        return
+    fig, ax = plt.subplots(figsize=(8.0, 4.5))
+    try:
+        for rep_i, (x_ps, curve) in sorted(curves.items()):
+            color = REP_COLORS.get(rep_i, UNGROUPED_COLOR)
+            x_ns = x_ps * PS_TO_NS
+            y = curve * conv
+            ax.plot(x_ns, y, color=color, alpha=0.35, linewidth=1)
+            # Pencere frame SAYISIYLA degil, serinin oranıyla secilir:
+            # sabit bir pencere farkli -dt degerlerinde farkli sureye denk
+            # gelir ve egriler kiyaslanamaz hale gelir.
+            n = len(y)
+            window = max(3, round(n / 20))
+            start, roll = rolling_mean(y, window)
+            if roll.size:
+                ax.plot(x_ns[start:start + roll.size], roll, color=color,
+                        linewidth=2, label=f"{rep_i} (pencere={window} frame)")
+            else:
+                ax.plot([], [], color=color, linewidth=2, label=rep_i)
+        ax.set_xlabel("Zaman (ns)")
+        ax.set_ylabel(f"Ortalama RMSD ({ulabel})")
+        ax.set_title(f"{cx} \u2014 {analysis}: denge analizi\n"
+                     "(her frame'in tum es frame'lere ortalama uzakligi)")
+        ax.legend()
+        fig.savefig(target / f"{cx}_{analysis}_equilibrium.png", dpi=150,
+                    bbox_inches="tight")
+    finally:
+        plt.close(fig)
+
+
+def plot_matrix(results_dir, out_dir):
+    """--matrix modu: kompleks basina isi haritasi izgarasi + denge egrisi."""
     groups = load_matrices(results_dir)
     if not groups:
         return
@@ -337,55 +461,25 @@ def plot_matrix(results_dir, out_dir):
     target.mkdir(parents=True, exist_ok=True)
 
     for (cx, analysis), recs in sorted(groups.items()):
-        fig = None
+        # Birim kurali .xvg ile birebir ayni: yalnizca nm cevrilir,
+        # taninmayan birim cevrilmeden kendi etiketiyle cizilir.
+        unit = recs[0]["unit"]
+        conv, ulabel = scale_and_label(unit)
+        if unit != "nm":
+            _warn_unknown_unit(f"{cx} ({analysis})", unit)
+
+        # Izgara ve denge egrisi AYRI yalitilir: biri patlarsa digeri yine
+        # de diske yazilmis olur.
         try:
-            rows = sorted({r["replica_j"] for r in recs})
-            cols = sorted({r["replica_i"] for r in recs})
-            by_cell = {(r["replica_i"], r["replica_j"]): r for r in recs}
-
-            unit = recs[0]["unit"]
-            conv, ulabel = scale_and_label(unit)
-            if unit != "nm":
-                _warn_unknown_unit(f"{cx} ({analysis})", unit)
-            vmin = min(float(r["values"].min()) for r in recs) * conv
-            vmax = max(float(r["values"].max()) for r in recs) * conv
-
-            fig, axes = plt.subplots(
-                len(rows), len(cols), squeeze=False,
-                figsize=(2.6 * len(cols) + 1.6, 2.6 * len(rows)),
-                sharex=True, sharey=True,
-            )
-            im = None
-            for ri, rep_j in enumerate(rows):
-                for ci, rep_i in enumerate(cols):
-                    ax = axes[ri][ci]
-                    rec = by_cell.get((rep_i, rep_j))
-                    if rec is None:
-                        ax.set_axis_off()
-                        continue
-                    x, y = rec["x_ps"], rec["y_ps"]
-                    im = ax.imshow(
-                        rec["values"] * conv, origin="lower", aspect="auto",
-                        vmin=vmin, vmax=vmax, cmap=MATRIX_CMAP,
-                        extent=[x[0] * PS_TO_NS, x[-1] * PS_TO_NS,
-                                y[0] * PS_TO_NS, y[-1] * PS_TO_NS],
-                    )
-                    if ri == len(rows) - 1:
-                        ax.set_xlabel(f"{rep_i} (ns)")
-                    if ci == 0:
-                        ax.set_ylabel(f"{rep_j} (ns)")
-            if im is not None:
-                fig.colorbar(im, ax=axes, label=f"RMSD ({ulabel})",
-                             fraction=0.046, pad=0.02)
-            fig.suptitle(f"{cx} \u2014 {analysis}")
-            fig.savefig(target / f"{cx}_{analysis}.png", dpi=150,
-                        bbox_inches="tight")
+            _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel)
         except Exception as exc:
             print(f"matris cizimi basarisiz ({cx}, {analysis}): {exc}",
                   file=sys.stderr)
-        finally:
-            if fig is not None:
-                plt.close(fig)
+        try:
+            _draw_equilibrium(cx, analysis, recs, target, conv, ulabel)
+        except Exception as exc:
+            print(f"denge cizimi basarisiz ({cx}, {analysis}): {exc}",
+                  file=sys.stderr)
 
 
 def main():
