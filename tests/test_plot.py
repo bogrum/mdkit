@@ -474,3 +474,21 @@ def test_equilibrium_hatasi_izgarayi_dusurmez(tmp_path, capsys):
     out = tmp_path / "plots"
     plot_results.plot_matrix(tmp_path, out)
     assert (out / "matrix" / "last1_cross_rmsd.png").exists()
+
+
+def test_rolling_mean_ortalanir(tmp_path):
+    """Pencere sonuna baglanirsa egri yarim pencere saga kayar ve
+    'ne zaman dengelendi' sorusu sistematik olarak GEC cevaplanir."""
+    # Tepe cevresi bilerek asimetrik: duz bir tepe tum pencereleri
+    # esitler ve argmax testi anlamsizlasir.
+    y = np.array([0.0, 1.0, 9.0, 1.0, 0.0])
+    start, vals = plot_results.rolling_mean(y, 3)
+    assert start == 1                       # pencere ortasi, sonu (2) degil
+    assert np.allclose(vals, [10 / 3, 11 / 3, 10 / 3])
+    # Yumusatilmis tepe, girdideki tepeyle AYNI indekse dusmeli.
+    assert start + int(np.argmax(vals)) == int(np.argmax(y)) == 2
+
+
+def test_rolling_mean_kisa_seri_bos_doner(tmp_path):
+    start, vals = plot_results.rolling_mean(np.array([1.0, 2.0]), 3)
+    assert start == 0 and vals.size == 0

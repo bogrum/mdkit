@@ -356,6 +356,20 @@ def equilibrium_curves(recs):
     return curves
 
 
+def rolling_mean(y, window):
+    """(baslangic_indeksi, ortalamalar). Pencere ORTALANIR.
+
+    Uc noktalari pencerenin SONUNA baglamak (x[window-1:]) egriyi yarim
+    pencere kadar saga kaydirir ve "ne zaman dengelendi" sorusunu sistematik
+    olarak GEC cevaplar. mode='same' ise kenarlari sifirla doldurup uclari
+    asagi ceker; bu yuzden 'valid' + ortalanmis indeks.
+    """
+    if window < 1 or len(y) < window:
+        return 0, np.asarray([], dtype=float)
+    vals = np.convolve(y, np.ones(window) / window, mode="valid")
+    return (window - 1) // 2, vals
+
+
 def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
     """Kompleks basina N x N isi haritasi izgarasi, ORTAK renk skalasiyla.
 
@@ -421,10 +435,10 @@ def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel):
             # gelir ve egriler kiyaslanamaz hale gelir.
             n = len(y)
             window = max(3, round(n / 20))
-            if n >= window:
-                roll = np.convolve(y, np.ones(window) / window, mode="valid")
-                ax.plot(x_ns[window - 1:], roll, color=color, linewidth=2,
-                        label=f"{rep_i} (pencere={window} frame)")
+            start, roll = rolling_mean(y, window)
+            if roll.size:
+                ax.plot(x_ns[start:start + roll.size], roll, color=color,
+                        linewidth=2, label=f"{rep_i} (pencere={window} frame)")
             else:
                 ax.plot([], [], color=color, linewidth=2, label=rep_i)
         ax.set_xlabel("Zaman (ns)")

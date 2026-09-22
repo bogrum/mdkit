@@ -224,18 +224,35 @@ def test_gercek_capraz_dal_transpoze_tutarli(mdkit, pair_config):
 
     cx = next(Path(root).glob("*_pandora"))
     a, b = reps[0], reps[1]
-    _m1, c_ab, _x, _y = collect_results.parse_xpm(
-        cx / a / "analysis" / f"cross_rmsd_{b}.xpm")   # -f a, -f2 b
-    _m2, c_ba, _x, _y = collect_results.parse_xpm(
-        cx / b / "analysis" / f"cross_rmsd_{a}.xpm")   # -f b, -f2 a
-    assert np.allclose(c_ab, c_ba.T, atol=1e-6), (
+
+    def _exact(rep, peer):
+        """Tam hassasiyetli degerler: .xpm eksenleri, .dat degerleri.
+
+        Ozdeslik .xpm uzerinde de tutar ama orada ZAYIF bir testtir:
+        80 seviyeye yuvarlama kucuk farklari zaten yok eder."""
+        path = cx / rep / "analysis" / f"cross_rmsd_{peer}"
+        _meta, _v, x, y = collect_results.parse_xpm(path.with_suffix(".xpm"))
+        return collect_results.parse_bin(path.with_suffix(".dat"),
+                                         len(x), len(y))
+
+    c_ab = _exact(a, b)   # -f a, -f2 b
+    c_ba = _exact(b, a)   # -f b, -f2 a
+
+    # TAM esitlik BEKLENMEZ: gmx ayni cifti fit sirasi ters cevrilmis halde
+    # hesaplar ve float32 yuvarlamasi farkli birikir. Gercek veride olculen
+    # sapma ~1e-6 (float32 eps ~1.2e-7); 1e-5 bunun uzerinde ama bir
+    # eksen/cevirme hatasinin uretecegi 0.1+ mertebesinin cok altinda.
+    assert np.allclose(c_ab, c_ba.T, atol=1e-5), (
         f"max fark {np.abs(c_ab - c_ba.T).max()}")
+
+    # Self-matris ise TAM simetriktir ve kosegeni TAM sifirdir -- burada
+    # yuvarlama farki yok, cunku ayni hesap ayni sirada yapiliyor.
+    self_a = _exact(a, a)
+    assert np.array_equal(self_a, self_a.T)
+    assert np.all(np.diag(self_a) == 0.0)
 
     # Capraz matrisin kosegeni self-matrisin aksine SIFIR DEGILDIR: ayni anda
     # farkli replikalar farkli konformasyonlardadir.
-    _m3, self_a, _x, _y = collect_results.parse_xpm(
-        cx / a / "analysis" / f"cross_rmsd_{a}.xpm")
-    assert np.allclose(np.diag(self_a), 0.0, atol=1e-3)
     assert not np.allclose(np.diag(c_ab), 0.0, atol=1e-3)
 
 
