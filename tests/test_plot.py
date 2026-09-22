@@ -2,6 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -348,3 +349,66 @@ def test_compare_gruplar_verilince_efsane_config_etiketlerini_kullanir(
     legend = seen[-1].get_legend()
     assert legend is not None
     assert [t.get_text() for t in legend.get_texts()] == ["ONDE", "ARKADA"]
+
+
+def _write_matrix_npz(mdir, cx, rep_i, rep_j, values, unit="nm",
+                      analysis="cross_rmsd"):
+    mdir.mkdir(parents=True, exist_ok=True)
+    values = np.asarray(values, dtype=np.float32)
+    n_y, n_x = values.shape
+    np.savez_compressed(
+        mdir / f"{cx}_{rep_i}_{analysis}_{rep_j}.npz",
+        values=values,
+        x_ps=np.arange(n_x, dtype=np.float64) * 100.0,
+        y_ps=np.arange(n_y, dtype=np.float64) * 100.0,
+        unit=unit, complex=cx, replica_i=rep_i, replica_j=rep_j,
+        analysis=analysis, output=f"{analysis}_{rep_j}.xpm",
+    )
+
+
+def test_matrix_modu_figur_uretir(tmp_path):
+    mdir = tmp_path / "matrices"
+    for i in ["rep1", "rep2"]:
+        for j in ["rep1", "rep2"]:
+            _write_matrix_npz(mdir, "last1", i, j, [[0.0, 0.5], [0.5, 0.0]])
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    assert (out / "matrix" / "last1_cross_rmsd.png").exists()
+
+
+def test_matrix_dizini_yoksa_sessiz(tmp_path):
+    """cross_rmsd hic kosulmamis olabilir; mod hata vermemeli."""
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    assert not (out / "matrix").exists()
+
+
+def test_bilinmeyen_birim_cevrilmez(tmp_path, capsys):
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "last1", "rep1", "rep1", [[0.0]], unit="nm^2")
+    plot_results.plot_matrix(tmp_path, tmp_path / "plots")
+    assert "nm^2" in capsys.readouterr().err
+
+
+def test_tek_kompleksin_hatasi_digerlerini_dusurmez(tmp_path, capsys):
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "iyi", "rep1", "rep1", [[0.0, 0.1], [0.1, 0.0]])
+    (mdir / "bozuk_rep1_cross_rmsd_rep1.npz").write_bytes(b"npz degil")
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    assert (out / "matrix" / "iyi_cross_rmsd.png").exists()
+    assert "bozuk" in capsys.readouterr().err
+
+
+def test_matrix_only_csv_olmadan_calisir(tmp_path):
+    """--matrix tek basina verildiginde CSV'ler olmasa da cikmamali."""
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "last1", "rep1", "rep1", [[0.0, 0.2], [0.2, 0.0]])
+    r = subprocess.run(
+        [sys.executable, "plot_results.py", "--results-dir", str(tmp_path),
+         "--matrix"],
+        capture_output=True, text=True,
+        cwd=str(__import__("pathlib").Path(plot_results.__file__).parent),
+    )
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "plots" / "matrix" / "last1_cross_rmsd.png").exists()

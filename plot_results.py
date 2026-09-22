@@ -15,6 +15,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 MDKIT = Path(__file__).resolve().parent
@@ -36,6 +37,11 @@ SERIES_LINESTYLES = ["-", "--", ":", "-."]
 
 DEFAULT_COMPARE_OUTPUT = "rmsd_pep_on_mhc.xvg"
 
+# Isi haritasi icin algisal olarak duzgun, TEK YONLU bir skala. Kategorik
+# REP_COLORS paleti burada kullanilmaz: o palet ust uste binen replika
+# CIZGILERINI ayirmak icin secilmisti, sirali bir buyuklugu kodlamak icin degil.
+MATRIX_CMAP = "viridis"
+
 
 def scale_and_label(unit):
     """(carpan, eksen etiketi). Yalnizca nm cevrilir; bilinmeyen birim
@@ -51,11 +57,15 @@ def _warn_unknown_unit(output, unit):
           "donusum uygulanmadi, oldugu gibi cizildi", file=sys.stderr)
 
 
-def load(results_dir):
+def load(results_dir, required=True):
     ts_path = results_dir / "timeseries_long.csv"
     pr_path = results_dir / "profile_long.csv"
     if not ts_path.exists() and not pr_path.exists():
-        sys.exit(f"sonuc CSV'leri bulunamadi: {results_dir}")
+        # --matrix tek basina istendiginde CSV'ler olmayabilir: matrisler
+        # ayri bir urun ve cross_rmsd tek basina kosulmus olabilir.
+        if required:
+            sys.exit(f"sonuc CSV'leri bulunamadi: {results_dir}")
+        return pd.DataFrame(), pd.DataFrame()
     ts = pd.read_csv(ts_path) if ts_path.exists() else pd.DataFrame()
     pr = pd.read_csv(pr_path) if pr_path.exists() else pd.DataFrame()
     return ts, pr
@@ -287,6 +297,97 @@ def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT, groups=()):
     plt.close(fig)
 
 
+def load_matrices(results_dir):
+    """results/matrices/*.npz -> {(kompleks, analiz): [kayit]}.
+
+    Bozuk tek bir dosya digerlerini dusurmez; adiyla stderr'e yazilir."""
+    mdir = results_dir / "matrices"
+    groups = {}
+    if not mdir.is_dir():
+        return groups
+    for f in sorted(mdir.glob("*.npz")):
+        try:
+            with np.load(f, allow_pickle=False) as d:
+                rec = {
+                    "values": d["values"],
+                    "x_ps": d["x_ps"], "y_ps": d["y_ps"],
+                    "unit": str(d["unit"]),
+                    "complex": str(d["complex"]),
+                    "replica_i": str(d["replica_i"]),
+                    "replica_j": str(d["replica_j"]),
+                    "analysis": str(d["analysis"]),
+                }
+        except Exception as exc:
+            print(f"matris okunamadi ({f.name}): {exc}", file=sys.stderr)
+            continue
+        groups.setdefault((rec["complex"], rec["analysis"]), []).append(rec)
+    return groups
+
+
+def plot_matrix(results_dir, out_dir):
+    """Kompleks basina N x N isi haritasi izgarasi, ORTAK renk skalasiyla.
+
+    Ortak skala sart: panel basina ayri skala, farkli replika ciftlerini
+    gorsel olarak karsilastirilamaz kilardi -- bu figurun tek amaci o
+    karsilastirma."""
+    groups = load_matrices(results_dir)
+    if not groups:
+        return
+    target = out_dir / "matrix"
+    target.mkdir(parents=True, exist_ok=True)
+
+    for (cx, analysis), recs in sorted(groups.items()):
+        fig = None
+        try:
+            rows = sorted({r["replica_j"] for r in recs})
+            cols = sorted({r["replica_i"] for r in recs})
+            by_cell = {(r["replica_i"], r["replica_j"]): r for r in recs}
+
+            unit = recs[0]["unit"]
+            conv, ulabel = scale_and_label(unit)
+            if unit != "nm":
+                _warn_unknown_unit(f"{cx} ({analysis})", unit)
+            vmin = min(float(r["values"].min()) for r in recs) * conv
+            vmax = max(float(r["values"].max()) for r in recs) * conv
+
+            fig, axes = plt.subplots(
+                len(rows), len(cols), squeeze=False,
+                figsize=(2.6 * len(cols) + 1.6, 2.6 * len(rows)),
+                sharex=True, sharey=True,
+            )
+            im = None
+            for ri, rep_j in enumerate(rows):
+                for ci, rep_i in enumerate(cols):
+                    ax = axes[ri][ci]
+                    rec = by_cell.get((rep_i, rep_j))
+                    if rec is None:
+                        ax.set_axis_off()
+                        continue
+                    x, y = rec["x_ps"], rec["y_ps"]
+                    im = ax.imshow(
+                        rec["values"] * conv, origin="lower", aspect="auto",
+                        vmin=vmin, vmax=vmax, cmap=MATRIX_CMAP,
+                        extent=[x[0] * PS_TO_NS, x[-1] * PS_TO_NS,
+                                y[0] * PS_TO_NS, y[-1] * PS_TO_NS],
+                    )
+                    if ri == len(rows) - 1:
+                        ax.set_xlabel(f"{rep_i} (ns)")
+                    if ci == 0:
+                        ax.set_ylabel(f"{rep_j} (ns)")
+            if im is not None:
+                fig.colorbar(im, ax=axes, label=f"RMSD ({ulabel})",
+                             fraction=0.046, pad=0.02)
+            fig.suptitle(f"{cx} \u2014 {analysis}")
+            fig.savefig(target / f"{cx}_{analysis}.png", dpi=150,
+                        bbox_inches="tight")
+        except Exception as exc:
+            print(f"matris cizimi basarisiz ({cx}, {analysis}): {exc}",
+                  file=sys.stderr)
+        finally:
+            if fig is not None:
+                plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser(description="mdkit cizim katmani")
     ap.add_argument("--results-dir", type=Path, required=True)
@@ -295,21 +396,26 @@ def main():
     ap.add_argument("--per-complex", action="store_true")
     ap.add_argument("--mean-sd", action="store_true")
     ap.add_argument("--compare", action="store_true")
+    ap.add_argument("--matrix", action="store_true")
     ap.add_argument("--compare-output", default=DEFAULT_COMPARE_OUTPUT)
     args = ap.parse_args()
 
-    ts, pr = load(args.results_dir)
+    run_all = not (args.per_complex or args.mean_sd or args.compare
+                   or args.matrix)
+    needs_csv = args.per_complex or args.mean_sd or args.compare or run_all
+    ts, pr = load(args.results_dir, required=needs_csv)
     groups = read_complex_groups(args.config)
     out_dir = args.results_dir / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    run_all = not (args.per_complex or args.mean_sd or args.compare)
     if args.per_complex or run_all:
         plot_per_complex(ts, pr, out_dir, groups)
     if args.mean_sd or run_all:
         plot_mean_sd(ts, pr, out_dir, groups)
     if args.compare or run_all:
         plot_compare(ts, out_dir, args.compare_output, groups)
+    if args.matrix or run_all:
+        plot_matrix(args.results_dir, out_dir)
 
     print(f"grafikler -> {out_dir}")
 

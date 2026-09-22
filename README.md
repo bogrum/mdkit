@@ -13,13 +13,14 @@ gozetimsiz kosup sonra hepsini birlikte gormek icin yazildi.
 ### Boru hatti
 
 ```
-config.sh ──► run_analysis.sh ──► analysis/<ad>.sh ──► rep*/analysis/*.xvg
+config.sh ──► run_analysis.sh ──► analysis/<ad>.sh ──► rep*/analysis/*.{xvg,xpm}
                   │                    (eklenti)              │
                   │                                           ▼
                   └──► results/run_log.csv          collect_results.py
                                                               │
                                                               ▼
                                             results/{timeseries,profile}_long.csv
+                                            results/matrices/*.npz + matrix_summary.csv
                                                               │
                                                               ▼
                                                      plot_results.py
@@ -34,11 +35,11 @@ config.sh ──► run_analysis.sh ──► analysis/<ad>.sh ──► rep*/an
 |---|---|---|---|
 | **Yapilandirma** | `config.sh` | Projeye ozel her sey: yollar, dosya adlari, zincir harfleri, replika listesi | Analizlerin ne yaptigi |
 | **Kosum (bash)** | `run_analysis.sh`, `analysis/lib.sh`, `analysis/<ad>.sh` | Kesif, index kurulumu, gmx cagrilari, log, idempotency, hata yalitimi | Sonuclarin nasil gosterilecegi |
-| **Toplama/cizim (Python)** | `collect_results.py`, `plot_results.py` | `.xvg` ayristirma, birlesik CSV, grafik | gmx'in nasil cagrildigi |
+| **Toplama/cizim (Python)** | `collect_results.py`, `plot_results.py` | `.xvg`/`.xpm` ayristirma, birlesik CSV + matris `.npz`, grafik | gmx'in nasil cagrildigi |
 
 Katmanlar arasindaki tek sozlesme iki sey: **`run_analysis.sh --list`** ciktisi
-(hangi cikti hangi analize ve hangi veri sekline ait) ve **`.xvg` dosyalarinin
-kendisi**. Python tarafi gmx komutlarini hic bilmez; bash tarafi pandas'i hic
+(hangi cikti hangi analize ve hangi veri sekline ait) ve **cikti dosyalarinin
+kendisi** (`.xvg` 1B, `.xpm` 2B). Python tarafi gmx komutlarini hic bilmez; bash tarafi pandas'i hic
 bilmez.
 
 ### Bir kosuda ne olur
@@ -67,7 +68,8 @@ bilmez.
    olur; sonraki replika ve sonraki kompleks normal devam eder.
 
 Sonra ayri bir adimda `collect_results.py` butun `.xvg`'leri iki uzun-format
-CSV'ye indirger, `plot_results.py` de yalnizca o CSV'leri okuyarak cizer.
+CSV'ye, butun `.xpm`'leri de `results/matrices/*.npz` + `matrix_summary.csv`
+haline indirger; `plot_results.py` de yalnizca `results/` altini okuyarak cizer.
 
 ### Diskte ne nereye yazilir
 
@@ -80,18 +82,22 @@ $DATA_ROOT/
 │   ├── traj_fit_mhc.xtc                (yalnizca --groove-fit; saklanir)
 │   └── analysis/
 │       ├── index.ndx                   (bir kez kurulur)
-│       └── *.xvg                       (ham ciktilar, trajektorinin yaninda)
+│       ├── *.xvg                       (ham 1B ciktilar, trajektorinin yaninda)
+│       └── *.xpm                       (ham 2B ciktilar/matrisler)
 └── results/
     ├── run_log.csv
     ├── timeseries_long.csv
     ├── profile_long.csv
+    ├── matrix_summary.csv
+    ├── matrices/<kompleks>_<replika>_<cikti>.npz
     └── plots/
         ├── per_complex/<kompleks>_<cikti>.png
         ├── mean_sd/<kompleks>_<cikti>.png
+        ├── matrix/<kompleks>_<analiz>.png
         └── compare_<cikti>.png
 ```
 
-Ham `.xvg` bilerek trajektorinin yaninda durur: dizin tasinirsa sonuc da
+Ham `.xvg`/`.xpm` bilerek trajektorinin yaninda durur: dizin tasinirsa sonuc da
 birlikte gider ve hangi kosudan geldigi belirsizlesmez. Birlesik CSV ise
 cizim katmaninin 105 dizini taramasini onler.
 
@@ -167,6 +173,10 @@ zincir harflerini hic gormez.
 # TSV: ad, kind, aciklama, tum ciktilar, bunlarin opsiyonel olanlari
 ./run_analysis.sh --list
 
+# Replikalar arasi 2D RMSD matrisleri (seyreltme varsayilani 200 ps)
+./run_analysis.sh --all -a cross_rmsd /veri/kok
+CROSS_RMSD_DT=500 ./run_analysis.sh --all -a cross_rmsd /veri/kok
+
 # Sonuclari topla, sonra cizdir
 python collect_results.py
 python plot_results.py --results-dir /veri/kok/results
@@ -208,21 +218,25 @@ yazmadigi icin orada `@ subtitle` kullanilir — yani seri adi
 ### Adim 2 — cizme
 
 ```bash
-python plot_results.py --results-dir /veri/kok/results                  # ucu birden
+python plot_results.py --results-dir /veri/kok/results                  # dordu birden
 python plot_results.py --results-dir ... --per-complex                  # yalnizca biri
 python plot_results.py --results-dir ... --mean-sd --compare            # secerek
+python plot_results.py --results-dir ... --matrix                       # yalnizca matrisler
 python plot_results.py --results-dir ... --compare-output rmsf_mhc.xvg  # baska metrik
 ```
 
-Mod verilmezse **ucu birden** kosar. `-c/--config` ile `COMPLEX_GROUPS` okunur.
+Mod verilmezse **dordu birden** kosar. `-c/--config` ile `COMPLEX_GROUPS` okunur.
+`--matrix` tek basina verildiginde uzun-format CSV'ler olmasa da calisir:
+matrisler ayri bir urundur ve `cross_rmsd` tek basina kosulmus olabilir.
 
-### Uc mod, uc soru
+### Dort mod, dort soru
 
 | Mod | Cikti | Hangi soruya cevap verir |
 |---|---|---|
 | `--per-complex` | `plots/per_complex/<kompleks>_<cikti>.png` | *Bu simulasyon guvenilir mi?* Kompleks basina tek figur; rep1/rep2/rep3 ayri renkte ust uste. Replikalar ayrisiyorsa yakinsama yok demektir. |
 | `--mean-sd` | `plots/mean_sd/<kompleks>_<cikti>.png` | *Yayina/teze ne koyacagim?* Replika ortalamasi + ±SD seridi. Replikalar arasi sacilim belirsizlik bandi olarak gosterilir. |
 | `--compare` | `plots/compare_<cikti>.png` | *Hangi peptidler kararli?* Tum kompleksler tek panelde, **medyana gore artan** sirali boxplot. Her kutu bir kompleks, kutu icindeki noktalar replikalarin ortalamalari. |
+| `--matrix` | `plots/matrix/<kompleks>_<analiz>.png` | *Replikalar ayni konformasyonlari mi geziyor?* Kompleks basina N x N isi haritasi izgarasi, ortak renk skalasiyla. Kosegende self-matrisler (tek replika icindeki metastabil durumlar), kosegen disinda capraz ciftler. Koyu bir capraz panel, iki replikanin AYNI bolgeyi ziyaret ettigini soyler. |
 
 `--compare` varsayilan olarak `rmsd_pep_on_mhc.xvg`'yi kullanir (ana metrik);
 `--compare-output` ile baska bir cikti secilebilir.
@@ -321,15 +335,40 @@ sonucu basari sayar. Hata mesajlari `>&2`'ye yazilir; runner onlari yakalayip
 analizlerle devam eder. Dosya adi `_` ile baslayan eklentiler otomatik
 kesiften duser (yalnizca `-a _ad` ile acikca secilebilirler).
 
-### `matrix` henuz desteklenmiyor
+### `matrix` — 2B ciktilar
 
-`ANALYSIS_KIND` sozlesme olarak `matrix` degerini kabul eder, ama ne
-`collect_results.py` ne de `plot_results.py` bunu tuketir. `matrix` ilan eden
-bir analiz calisir ve `.xvg` ciktisi uretir, fakat toplama asamasinda hicbir
-CSV'ye girmez; `collect_results.py` stderr'e bir uyari yazar (cikti dosyasi ve
-kind adiyla, cikti basina en fazla bir kez). Bu **bilinen bir sinirdir, sessiz
-veri kaybi degil.** DSSP gibi 2B ciktili analizler icin once bu katmanlarin
-`matrix` destegi yazilmalidir.
+`ANALYSIS_KIND="matrix"` ilan eden bir analiz `.xpm` uretir; `collect_results.py`
+bunlari `results/matrices/<kompleks>_<replika>_<cikti>.npz` dosyalarina ve
+`results/matrix_summary.csv` ozetine cevirir, `plot_results.py --matrix` de
+kompleks basina bir isi haritasi izgarasi cizer. Ilk ornegi `cross_rmsd`.
+
+Matrisler uzun-format CSV'ye **girmez**: 451x451'lik 315 matris ~64 milyon satir
+ederdi. `timeseries_long.csv`/`profile_long.csv` icin dogru olan bicim 2B veri
+icin degil.
+
+> **`-skip` TUZAGI.** `gmx`'in `-skip`/`-skip2` secenekleri `.xpm`'in eksen
+> zaman degerlerini bozar: ilk zaman dogru yazilir, geri kalani `0` olur
+> (GROMACS 2025.4'te olculdu). Seyreltme **her zaman `-dt`** (ps) ile yapilir.
+> `-dt` frame'leri okuma aninda eler, matris zaten seyreltilmis veriden kurulur
+> ve eksenler dogru cikar.
+
+#### Bilinen sinirlar
+
+**Degerler 80 seviyeye yuvarlanmistir.** `.xpm` surekli degerleri `-nlevels`
+(varsayilan 80) renk seviyesine indirger. Isi haritasi icin fazlasiyla yeterli,
+ama `matrix_summary.csv`'deki `min`/`mean`/`max` sayilari da bu cozunurluktedir.
+Tam degerler gerekirse `gmx rms -bin` ham binary dump uretir; arac bunu su an
+kullanmaz.
+
+**`-r/--reps` ile kisitlanmis kosu eksik matris uretir.** Cikti manifestosu
+`config.sh`'teki `REPS`'ten turetilir, `-r` ise onu yalnizca kosu icin ezer.
+Sessiz bir yanlislik degil: eksik dosya toplanmaz, sonraki tam kosu eksikligi
+gorup yeniden uretir.
+
+**DSSP gibi farkli semantikli 2B ciktilar** (residue x zaman) bu izgara
+ciziminden faydalanmaz; onlar icin ayri bir cizim bicimi gerekir. Toplama
+katmani ise genel: `collect_results.py` replika adiyla eslesmeyen bir matris
+ciktisini da toplar, yalnizca `replica_j` kolonu bos kalir.
 
 ---
 
@@ -376,7 +415,7 @@ Veri veya gmx yoksa ilgili testler atlanir.
 
 ## Tasarim belgeleri
 
-`docs/` altinda, aracin neden boyle yazildigini anlatan iki belge var:
+`docs/` altinda, aracin neden boyle yazildigini anlatan belgeler var:
 
 - **`docs/design.md`** — tasarim spec'i. GROMACS davranisi hakkinda komutla
   dogrulanmis bulgular (`-tu` tuzagi, hangi tpr'nin zincir ID'lerini tasidigi,
@@ -384,6 +423,10 @@ Veri veya gmx yoksa ilgili testler atlanir.
   sozlesmesinin sekli. Araci degistirecek biri once bunu okumali.
 - **`docs/implementation-plan.md`** — aracin 11 adimda nasil kuruldugunu
   gosteren uygulama plani. Tarihsel kayit; gunluk kullanim icin gerekmez.
+- **`docs/superpowers/specs/2026-09-21-cross-rmsd-matrix-design.md`** — capraz-RMSD
+  matrisleri ve `matrix` katman destegi. `.xpm` biciminin uc tuzagi (cok satirli
+  eksen yorumlari, ters sirada yazilan piksel satirlari, sabit genislikli
+  karakter alani) ve `-skip`/`-b` davranisi komutla dogrulanmis olarak burada.
 
 Bu depo `TUSEB-Bitirme/scratch` deposundan `git subtree split` ile cikarilmistir;
 19 commit'lik gecmis korunmustur.
