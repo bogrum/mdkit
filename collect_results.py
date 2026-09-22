@@ -16,12 +16,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
+
 MDKIT = Path(__file__).resolve().parent
 
 XVG_LEGEND = re.compile(r'@\s+s(\d+)\s+legend\s+"(.*)"')
 XVG_LABEL = re.compile(r'@\s+(title|subtitle)\s+"(.*)"')
 XVG_AXIS = re.compile(r'@\s+(xaxis|yaxis)\s+label\s+"(.*)"')
 UNIT_IN_LABEL = re.compile(r"\(([^)]*)\)")
+
+XPM_LEGEND = re.compile(r'/\*\s*legend:\s*"(.*)"\s*\*/')
+XPM_AXIS = re.compile(r'/\*\s*([xy])-axis:\s*(.*?)\s*\*/')
+XPM_HEADER = re.compile(r'^"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)"')
+XPM_VALUE = re.compile(r'/\*\s*"(.*?)"\s*\*/')
 
 TS_FIELDS = ["complex", "replica", "analysis", "output", "series",
              "time_ps", "value", "unit"]
@@ -55,6 +62,91 @@ def parse_xvg(path):
         except ValueError:
             continue
     return meta, rows
+
+
+def parse_xpm(path):
+    """gmx .xpm matrisini (meta, values, x_ps, y_ps) olarak dondurur.
+
+    UC TUZAK, ucu de GROMACS 2025.4 uzerinde olculerek saptandi (spec 2.4):
+
+    1. Uzun eksenler BIRDEN FAZLA `/* x-axis: */` yorumuna bolunur. Yalnizca
+       ilkini okuyan bir ayristirici ekseni sessizce keser.
+    2. Piksel satirlari y ekseninin TERSI sirada yazilir. Cevrilmezse matris
+       yatayda aynalanir -- self-matris disinda gozle fark edilmez.
+    3. Karakter alani CPP genisliginde SABITTIR ve bosluk da gecerli bir
+       karakterdir. split() ile ayristirmak CPP>1'de anahtari bozar.
+    """
+    colors = {}
+    axes = {"x": [], "y": []}
+    pixel_rows = []
+    meta = {}
+    width = height = cpp = None
+    colors_left = 0
+
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("/*"):
+            m = XPM_LEGEND.search(line)
+            if m:
+                meta["legend"] = m.group(1)
+                continue
+            m = XPM_AXIS.search(line)
+            if m:
+                # TUZAK 1: extend, assign DEGIL.
+                axes[m.group(1)].extend(float(v) for v in m.group(2).split())
+            continue
+        if not line.startswith('"'):
+            continue
+        if width is None:
+            m = XPM_HEADER.match(line)
+            if m:
+                width, height, ncolors, cpp = (int(g) for g in m.groups())
+                colors_left = ncolors
+            continue
+        if colors_left > 0:
+            # TUZAK 3: konumsal dilim.
+            key = line[1:1 + cpp]
+            vm = XPM_VALUE.search(line)
+            if vm is None:
+                raise ValueError(f"{path.name}: renk satiri cozulemedi: {line}")
+            colors[key] = float(vm.group(1))
+            colors_left -= 1
+            continue
+        pixel_rows.append(line[1:1 + width * cpp])
+
+    if width is None:
+        raise ValueError(f"{path.name}: .xpm basligi bulunamadi")
+    if len(pixel_rows) != height:
+        raise ValueError(
+            f"{path.name}: basligi {height} satir diyor, {len(pixel_rows)} bulundu"
+        )
+
+    values = np.empty((height, width), dtype=np.float32)
+    for r, row in enumerate(pixel_rows):
+        for c in range(width):
+            key = row[c * cpp:(c + 1) * cpp]
+            try:
+                values[r, c] = colors[key]
+            except KeyError:
+                raise ValueError(
+                    f"{path.name}: renk tablosunda olmayan karakter {key!r}"
+                ) from None
+    # TUZAK 2.
+    values = values[::-1].copy()
+
+    x_ps = np.asarray(axes["x"], dtype=np.float64)
+    y_ps = np.asarray(axes["y"], dtype=np.float64)
+    if values.shape != (len(y_ps), len(x_ps)):
+        raise ValueError(
+            f"{path.name}: matris {values.shape}, eksenler "
+            f"({len(y_ps)}, {len(x_ps)}) -- uyusmuyor"
+        )
+
+    m = UNIT_IN_LABEL.search(meta.get("legend", ""))
+    meta["unit"] = m.group(1) if m else ""
+    return meta, values, x_ps, y_ps
 
 
 def _bash(snippet):
