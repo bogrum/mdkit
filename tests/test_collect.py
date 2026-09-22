@@ -304,3 +304,49 @@ def test_matrix_dir_yoksa_matris_atlanir(fake_dataset, tmp_path):
     _ts, _pr, mx = collect_results.collect(
         fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest)
     assert mx == []
+
+
+def test_ozet_istatistikleri(fake_dataset, tmp_path):
+    write_outputs(fake_dataset, {"cross_rmsd_rep2.xpm": MATRIX_XPM})
+    manifest = {"cross_rmsd_rep2.xpm": ("cross_rmsd", "matrix")}
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=tmp_path / "m")
+    rec = [r for r in mx if r["complex"] == "last1"
+           and r["replica_i"] == "rep1"][0]
+    # Capraz cift (rep1 x rep2): TUM hucreler sayilir.
+    # Matris: [[0,.5,1],[.5,0,.5],[1,.5,0]] -> min 0, max 1, mean 4/9
+    assert rec["min"] == pytest.approx(0.0)
+    assert rec["max"] == pytest.approx(1.0)
+    assert rec["mean"] == pytest.approx(4.0 / 9.0, abs=1e-6)
+
+
+def test_self_matriste_kosegen_haric(fake_dataset, tmp_path):
+    """Self-matriste kosegen tanim geregi sifirdir ve min'i anlamsiz kilar."""
+    write_outputs(fake_dataset, {"cross_rmsd_rep1.xpm": MATRIX_XPM})
+    manifest = {"cross_rmsd_rep1.xpm": ("cross_rmsd", "matrix")}
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=tmp_path / "m")
+    rec = [r for r in mx if r["complex"] == "last1"
+           and r["replica_i"] == "rep1"][0]
+    assert rec["replica_i"] == rec["replica_j"] == "rep1"
+    # Kosegen (uc adet 0) haric: dort 0.5 ve iki 1.0 -> min 0.5
+    assert rec["min"] == pytest.approx(0.5)
+    assert rec["mean"] == pytest.approx((4 * 0.5 + 2 * 1.0) / 6.0, abs=1e-6)
+
+
+def test_summary_csv_yazilir(fake_dataset, fake_config, tmp_path):
+    write_outputs(fake_dataset, {"cross_rmsd_rep2.xpm": MATRIX_XPM})
+    out = tmp_path / "results"
+    r = subprocess.run(
+        [sys.executable, "collect_results.py", "-c", str(fake_config),
+         "-o", str(out)],
+        capture_output=True, text=True,
+        cwd=str(__import__("pathlib").Path(collect_results.__file__).parent),
+    )
+    assert r.returncode == 0, r.stderr
+    with (out / "matrix_summary.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert rows, r.stdout
+    assert set(rows[0]) == set(collect_results.MX_FIELDS)

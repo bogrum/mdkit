@@ -322,11 +322,19 @@ def collect_matrix(xpm, cname, rep, reps, analysis, matrix_dir):
         unit=meta["unit"], complex=cname, replica_i=rep,
         replica_j=peer or "", analysis=analysis, output=xpm.name,
     )
+    # Self-matriste kosegen TANIM GEREGI sifirdir ve min'i anlamsiz kilar;
+    # tezde kullanilacak sayi capraz ciftin minimumudur.
+    if peer == rep and values.shape[0] == values.shape[1]:
+        sample = values[~np.eye(values.shape[0], dtype=bool)]
+    else:
+        sample = values.ravel()
+
     return {
         "complex": cname, "replica_i": rep, "replica_j": peer or "",
         "analysis": analysis, "output": xpm.name,
         "n_x": int(values.shape[1]), "n_y": int(values.shape[0]),
-        "unit": meta["unit"],
+        "min": float(sample.min()), "mean": float(sample.mean()),
+        "max": float(sample.max()), "unit": meta["unit"],
     }
 
 
@@ -355,10 +363,12 @@ def main():
         data_root, complex_glob, reps, manifest, matrix_dir=matrix_dir)
     write_csv(out_dir / "timeseries_long.csv", TS_FIELDS, timeseries)
     write_csv(out_dir / "profile_long.csv", PR_FIELDS, profile)
+    write_csv(out_dir / "matrix_summary.csv", MX_FIELDS, matrices)
 
     print(f"timeseries: {len(timeseries)} satir -> {out_dir / 'timeseries_long.csv'}")
     print(f"profile   : {len(profile)} satir -> {out_dir / 'profile_long.csv'}")
-    print(f"matris    : {len(matrices)} dosya -> {matrix_dir}")
+    print(f"matris    : {len(matrices)} dosya -> {matrix_dir} "
+          f"(+ {out_dir / 'matrix_summary.csv'})")
 
 
 if __name__ == "__main__":
