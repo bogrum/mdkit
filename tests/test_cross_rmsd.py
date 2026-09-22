@@ -27,10 +27,16 @@ def test_manifestoda_matrix_kind(mdkit, fake_config):
 
 
 def test_ciktilar_repsten_turetilir(mdkit, fake_config):
-    """fake_config REPS=(rep1 rep2 rep3)."""
+    """fake_config REPS=(rep1 rep2 rep3).
+
+    Es basina IKI cikti: .xpm (eksenler, birim, legend) ve .dat (tam
+    hassasiyetli degerler). Ikisi de zorunlu -- .dat'in metadata'si,
+    .xpm'in de tam degerleri yoktur, yani biri eksikken matris eksiktir."""
     parts = _list(mdkit, fake_config)
-    assert parts[3] == ("cross_rmsd_rep1.xpm,cross_rmsd_rep2.xpm,"
-                        "cross_rmsd_rep3.xpm")
+    assert parts[3] == (
+        "cross_rmsd_rep1.xpm,cross_rmsd_rep1.dat,"
+        "cross_rmsd_rep2.xpm,cross_rmsd_rep2.dat,"
+        "cross_rmsd_rep3.xpm,cross_rmsd_rep3.dat")
 
 
 def test_farkli_reps_farkli_manifesto(mdkit, fake_config, tmp_path):
@@ -41,7 +47,8 @@ def test_farkli_reps_farkli_manifesto(mdkit, fake_config, tmp_path):
                                         "REPS=(repA repB)")
     )
     parts = _list(mdkit, alt)
-    assert parts[3] == "cross_rmsd_repA.xpm,cross_rmsd_repB.xpm"
+    assert parts[3] == ("cross_rmsd_repA.xpm,cross_rmsd_repA.dat,"
+                        "cross_rmsd_repB.xpm,cross_rmsd_repB.dat")
 
 
 def test_opsiyonel_cikti_yok(mdkit, fake_config):
@@ -230,3 +237,43 @@ def test_gercek_capraz_dal_transpoze_tutarli(mdkit, pair_config):
         cx / a / "analysis" / f"cross_rmsd_{a}.xpm")
     assert np.allclose(np.diag(self_a), 0.0, atol=1e-3)
     assert not np.allclose(np.diag(c_ab), 0.0, atol=1e-3)
+
+
+@needs_gmx
+def test_gercek_dat_tam_hassasiyetli(mdkit, real_config):
+    """.dat gercekten .xpm'den daha hassas mi? Iddia edilmiyor, olculuyor.
+
+    Ayrica self-matrisin kosegeni .dat'ta TAM sifir olmalidir: .xpm'de
+    sifir, 80 seviyenin en dusugune denk geldigi icin zaten sifir cikar --
+    yani kosegen tek basina hassasiyeti kanitlamaz, farkli deger SAYISI
+    kanitlar.
+    """
+    root = subprocess.run(
+        ["bash", "-c",
+         f'source "{mdkit}/analysis/lib.sh" && '
+         f'mdkit_load_config "{real_config}" && printf "%s" "$DATA_ROOT"'],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    r = subprocess.run(
+        ["bash", str(mdkit / "run_analysis.sh"), "-c", str(real_config),
+         "-a", "cross_rmsd", "-b", "0", "--all", root],
+        capture_output=True, text=True,
+        env={**os.environ, "CROSS_RMSD_DT": "50"},
+    )
+    assert r.returncode == 0, r.stderr
+
+    adir = next(Path(root).glob("*/rep1/analysis"))
+    xpm, dat = adir / "cross_rmsd_rep1.xpm", adir / "cross_rmsd_rep1.dat"
+    assert dat.is_file(), sorted(f.name for f in adir.iterdir())
+
+    sys.path.insert(0, str(mdkit))
+    import collect_results
+    _meta, v_xpm, x, y = collect_results.parse_xpm(xpm)
+    v_dat = collect_results.parse_bin(dat, len(x), len(y))
+
+    assert v_dat.shape == v_xpm.shape
+    assert np.allclose(v_dat, v_xpm, atol=0.05), "ayni matris olmali"
+    assert len(np.unique(v_dat)) > len(np.unique(v_xpm)), (
+        f".dat {len(np.unique(v_dat))} farkli deger, "
+        f".xpm {len(np.unique(v_xpm))} -- hassasiyet kazanci yok")
+    assert np.all(np.diag(v_dat) == 0.0)

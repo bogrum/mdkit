@@ -20,6 +20,14 @@ ANALYSIS_KIND="matrix"
 ANALYSIS_NEEDS_INDEX=1
 ANALYSIS_DEFAULT_BEGIN=10000
 
+# Es basina IKI cikti: .xpm ve .dat.
+#   .xpm -> eksen zamanlari, birim, legend (ama degerler 80 renk seviyesine
+#           yuvarlanmistir)
+#   .dat -> gmx rms -bin ham dump'i; tam float32 degerler, ama HICBIR
+#           metadata yok (baslik bile yok)
+# Ikisi de zorunlu: tek baslarina eksiktirler. matrix_summary.csv'deki
+# min/mean/max tez tablosuna girecegi icin yuvarlanmis degerlerle yetinilmiyor.
+#
 # Ciktilar $REPS'ten turetilir. Self-matris (rep1'in dizininde
 # cross_rmsd_rep1.xpm) iki isi birden gorur: tek replika icindeki metastabil
 # durumlari gosterir VE cikti kumesini her replika icin TEKDUZE yapar.
@@ -30,6 +38,7 @@ ANALYSIS_DEFAULT_BEGIN=10000
 ANALYSIS_OUTPUTS=()
 for _cross_rmsd_rep in ${REPS[@]+"${REPS[@]}"}; do
     ANALYSIS_OUTPUTS+=("cross_rmsd_${_cross_rmsd_rep}.xpm")
+    ANALYSIS_OUTPUTS+=("cross_rmsd_${_cross_rmsd_rep}.dat")
 done
 unset _cross_rmsd_rep
 
@@ -78,12 +87,13 @@ _cross_rmsd_pairs() {
     # $1 = kompleks dizini, $2 = out_dir, $3 = gecici .xvg yolu.
     # Esler _cross_rmsd_check_peers tarafindan ZATEN dogrulandi.
     local cx_dir="$1" out_dir="$2" tmp_xvg="$3"
-    local peer peer_xtc out dt
+    local peer peer_xtc out out_bin dt
     dt="${CROSS_RMSD_DT:-200}"
 
     for peer in ${REPS[@]+"${REPS[@]}"}; do
         peer_xtc="$cx_dir/$peer/$TRAJ_NAME"
         out="$out_dir/cross_rmsd_${peer}.xpm"
+        out_bin="$out_dir/cross_rmsd_${peer}.dat"
 
         # -skip KULLANILMAZ: .xpm eksen zamanlarini bozar -- ilk zaman dogru,
         #   gerisi 0 yazilir (GROMACS 2025.4'te olculdu). Seyreltme -dt ile.
@@ -97,18 +107,18 @@ _cross_rmsd_pairs() {
             # Self-matris: -f2 verilmez. Olculen ve kosegeni sifir dogrulanan
             # bicim budur.
             "$GMX" rms -s "$REF_PDB" -f "$XTC" -n "$NDX" \
-                -m "$out" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
+                -m "$out" -bin "$out_bin" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
                 <<< $'RECEPTOR_BB\nLIGAND_BB' \
                 || { echo "gmx rms basarisiz: cross_rmsd_${peer}" >&2; return 1; }
         else
             "$GMX" rms -s "$REF_PDB" -f "$XTC" -f2 "$peer_xtc" -n "$NDX" \
-                -m "$out" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
+                -m "$out" -bin "$out_bin" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
                 <<< $'RECEPTOR_BB\nLIGAND_BB' \
                 || { echo "gmx rms basarisiz: cross_rmsd_${peer}" >&2; return 1; }
         fi
 
-        [[ -s "$out" ]] || {
-            echo "matris uretilmedi: cross_rmsd_${peer}" >&2
+        [[ -s "$out" && -s "$out_bin" ]] || {
+            echo "matris uretilmedi: cross_rmsd_${peer} (.xpm ve .dat birlikte gerekli)" >&2
             return 1
         }
     done
