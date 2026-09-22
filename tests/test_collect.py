@@ -474,3 +474,39 @@ def test_mean_vs_self_kolonu_csvde(fake_dataset, tmp_path):
     selfs = [r for r in mx if r["replica_i"] == r["replica_j"]]
     assert selfs and all(r["mean_vs_self"] == pytest.approx(1.0)
                          for r in selfs)
+
+
+def test_residue_from_end_kolonu(mdkit, fake_config, fake_dataset, tmp_path):
+    """Peptidler 8-11 residue arasinda degisir; ham residue numarasi
+    kompleksler arasi KARSILASTIRILAMAZ. C-ucundan sayan ikinci bir kolon
+    her turlu konum normalizasyonunu turetilebilir kilar.
+
+    Etiket (P1/PO gibi) CSV'ye YAZILMAZ: o bir yorumdur ve cizim
+    katmanina aittir. Toplama katmani ham olguyu saklar.
+    """
+    write_outputs(fake_dataset, {"rmsf_pep_self.xvg": PROFILE_XVG})
+    run_collect(mdkit, fake_config)
+    rows = list(csv.DictReader(
+        (tmp_path / "results" / "profile_long.csv").read_text().splitlines()))
+    assert "residue_from_end" in collect_results.PR_FIELDS
+    # PROFILE_XVG iki residue icerir (1 ve 2) -> son residue 0, oncesi -1
+    by_res = {int(r["residue"]): int(r["residue_from_end"]) for r in rows}
+    assert by_res == {1: -1, 2: 0}
+
+
+def test_residue_from_end_dosya_basina_hesaplanir(fake_dataset, tmp_path):
+    """Uzunluk dosyadan okunur; farkli uzunluktaki iki cikti karismaz."""
+    uzun = textwrap.dedent("""\
+        @    yaxis  label "(nm)"
+        @TYPE xy
+           1   0.10
+           2   0.20
+           3   0.30
+           4   0.40
+        """)
+    write_outputs(fake_dataset, {"rmsf_pep_self.xvg": uzun})
+    manifest = {"rmsf_pep_self.xvg": ("rmsf", "profile")}
+    _ts, pr, _mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest)
+    by_res = {r["residue"]: r["residue_from_end"] for r in pr}
+    assert by_res == {1: -3, 2: -2, 3: -1, 4: 0}

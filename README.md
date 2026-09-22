@@ -96,6 +96,7 @@ $DATA_ROOT/
         ├── mean_sd/<kompleks>_<cikti>.png
         ├── matrix/<kompleks>_<analiz>.png            (kompleks basina skala)
         ├── matrix/<kompleks>_<analiz>_equilibrium.png
+        ├── profile_compare/<cikti>.png               (gruplar arasi, konuma gore)
         ├── matrix_global/<kompleks>_<analiz>.png     (ortak skala)
         └── compare_<cikti>.png
 ```
@@ -134,7 +135,8 @@ Ayri bir kurulum yok. Gereksinimler:
 
 - bash 5+
 - GROMACS (2025.4 ile gelistirildi ve test edildi)
-- Python 3.11+ ve numpy, pandas, matplotlib (cizim icin); pytest (testler icin).
+- Python 3.11+ ve numpy, pandas, matplotlib, scipy (cizim ve istatistik icin);
+  pytest (testler icin).
   Tamami `requirements.txt` icinde: `pip install -r requirements.txt`.
 
 ## Yapilandirma
@@ -221,24 +223,26 @@ yazmadigi icin orada `@ subtitle` kullanilir — yani seri adi
 ### Adim 2 — cizme
 
 ```bash
-python plot_results.py --results-dir /veri/kok/results                  # dordu birden
+python plot_results.py --results-dir /veri/kok/results                  # besi birden
 python plot_results.py --results-dir ... --per-complex                  # yalnizca biri
 python plot_results.py --results-dir ... --mean-sd --compare            # secerek
 python plot_results.py --results-dir ... --matrix                       # yalnizca matrisler
+python plot_results.py --results-dir ... --profile-compare              # gruplar arasi profil
 python plot_results.py --results-dir ... --compare-output rmsf_mhc.xvg  # baska metrik
 ```
 
-Mod verilmezse **dordu birden** kosar. `-c/--config` ile `COMPLEX_GROUPS` okunur.
+Mod verilmezse **besi birden** kosar. `-c/--config` ile `COMPLEX_GROUPS` okunur.
 `--matrix` tek basina verildiginde uzun-format CSV'ler olmasa da calisir:
 matrisler ayri bir urundur ve `cross_rmsd` tek basina kosulmus olabilir.
 
-### Dort mod, dort soru
+### Bes mod, bes soru
 
 | Mod | Cikti | Hangi soruya cevap verir |
 |---|---|---|
 | `--per-complex` | `plots/per_complex/<kompleks>_<cikti>.png` | *Bu simulasyon guvenilir mi?* Kompleks basina tek figur; rep1/rep2/rep3 ayri renkte ust uste. Replikalar ayrisiyorsa yakinsama yok demektir. |
 | `--mean-sd` | `plots/mean_sd/<kompleks>_<cikti>.png` | *Yayina/teze ne koyacagim?* Replika ortalamasi + ±SD seridi. Replikalar arasi sacilim belirsizlik bandi olarak gosterilir. |
 | `--compare` | `plots/compare_<cikti>.png` | *Hangi peptidler kararli?* Tum kompleksler tek panelde, **medyana gore artan** sirali boxplot. Her kutu bir kompleks, kutu icindeki noktalar replikalarin ortalamalari. |
+| `--profile-compare` | `plots/profile_compare/<cikti>.png` | *Gruplar birbirinden ayriliyor mu, ve NEREDE?* Her `profile` ciktisi icin konum kutulari (`P1`, `P2`, `orta`, `PO-1`, `PO`) ve her kutuda grup basina boxplot + test p degeri. Gruplar `COMPLEX_GROUPS`'tan gelir. |
 | `--matrix` | `plots/matrix/<kompleks>_<analiz>.png` ve `..._equilibrium.png` | *Replikalar ayni konformasyonlari mi geziyor?* Kompleks basina N x N isi haritasi izgarasi, ortak renk skalasiyla. Kosegende self-matrisler (tek replika icindeki metastabil durumlar), kosegen disinda capraz ciftler. Koyu bir capraz panel, iki replikanin AYNI bolgeyi ziyaret ettigini soyler. Yaninda **denge egrisi**: her frame'in tum es frame'lere ortalama uzakligi; egri duzlestiginde replika yeni bolge bulmayi birakmistir. Replikalar uc uca eklenmez, ortak zaman ekseninde ust uste cizilir. |
 
 `--compare` varsayilan olarak `rmsd_pep_on_mhc.xvg`'yi kullanir (ana metrik);
@@ -256,6 +260,45 @@ Bir `.xvg` birden fazla seri tasiyorsa (ör. `gmx gyrate`: Rg, RgX, RgY, RgZ;
   varyansi degil, seriler arasi fark olurdu ve anlamsiz bir hata cubugu cikardi.
 
 Tek serili ciktilarda gorunum degismez: duz cizgi, efsanede yalnizca replika adi.
+
+### Konum normalizasyonu: neden gerekli
+
+Peptidler ayni uzunlukta degildir (bu veri setinde 8-11 residue). Bu yuzden
+**ham residue numarasi kompleksler arasi karsilastirilamaz**: bir 8-mer'in 5.
+residue'su peptidin ortasindadir, 11-mer'in 5.'si degil. Residue 5'in RMSF'ini
+35 komplekste ortalamak, farkli rolleri olan residue'lari ayni kovaya koymaktir.
+
+`profile_long.csv` bu yuzden **iki** konum kolonu tasir:
+
+| Kolon | Sayma yonu | 9-mer'de ornek |
+|---|---|---|
+| `residue` | N-ucundan, 1'den baslar | 1, 2, 3, … 9 |
+| `residue_from_end` | C-ucundan, son residue 0 | -8, -7, … -1, 0 |
+
+Ikisi birlikte her turlu konum normalizasyonunu turetilebilir kilar.
+**Etiket (`P2`, `PO` gibi) CSV'ye YAZILMAZ**: o bir yorumdur ve katman
+sozlesmesi geregi cizim tarafina aittir. Baska bir semaya (or. yalnizca ankraj
+/ ankraj-disi) gecmek isteyen biri CSV'yi yeniden uretmek zorunda kalmaz.
+
+`plot_results.py` bu iki kolondan su kutulari turetir:
+
+    P1  P2  orta  PO-1  PO
+
+N-ucu **oncelikli**: 3 residue'luk bir peptidde 2. residue hem `P2` hem
+`PO-1` olurdu ve ayni olcum iki kutuya birden girerdi.
+
+> **`--profile-compare` coklu test uretir.** Bes konum test edilir; figurun
+> basliginda Bonferroni esigi (`0.05/5 = 0.01`) yazar ve esigi gecmeyen p
+> degerleri **soluk** cizilir. Tek bir `p < 0.05` gorup anlamli saymayin --
+> figur bunu kasten zorlastirir.
+
+> **Uzun profillerde az bilgilendiricidir.** `rmsf_mhc` ~275 residue'dur ve
+> "orta" kutusu bunlarin neredeyse tamamini icerir. Figur yine de uretilir:
+> sihirli bir uzunluk esigiyle sessizce gizlemek, zayif bir ciktidan kotudur.
+
+Replikalar **once kompleks basina ortalanir**, sonra gruplar karsilastirilir.
+Aksi halde ayni kompleksin uc replikasi uc bagimsiz gozlem sayilir ve p
+degeri oldugundan kucuk cikar.
 
 ### Birimler
 

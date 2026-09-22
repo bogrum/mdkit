@@ -14,9 +14,11 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.patches as mpatches  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+from scipy import stats  # noqa: E402
 
 MDKIT = Path(__file__).resolve().parent
 
@@ -41,6 +43,12 @@ DEFAULT_COMPARE_OUTPUT = "rmsd_pep_on_mhc.xvg"
 # REP_COLORS paleti burada kullanilmaz: o palet ust uste binen replika
 # CIZGILERINI ayirmak icin secilmisti, sirali bir buyuklugu kodlamak icin degil.
 MATRIX_CMAP = "viridis"
+
+# Profil konum kutulari. Peptidler 8-11 residue arasinda degistigi icin ham
+# residue numarasi kompleksler arasi karsilastirilamaz: bir 8-mer'in 5.
+# residue'su ortada, 11-mer'in 5.'si degil. Kutular iki UCTAN sayilarak
+# tanimlanir, boylece ayni etiket ayni ROLE denk gelir.
+POSITION_BINS = ["P1", "P2", "orta", "PO-1", "PO"]
 
 # Denge egrisinin yuvarlanan ortalama penceresi, ns. SABIT bir SUREDIR;
 # serinin oranı (n/20) DEGILDIR. Gerekce: yuvarlanan ortalama bir alcak
@@ -543,6 +551,154 @@ def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel,
         plt.close(fig)
 
 
+def position_bin(residue, residue_from_end):
+    """Residue -> konum kutusu. N-ucu ONCELIKLI.
+
+    Oncelik sart: 3 residue'luk bir peptidde 2. residue hem `P2` hem
+    `PO-1` olurdu ve ayni olcum iki kutuya birden girerdi.
+    """
+    if residue == 1:
+        return "P1"
+    if residue == 2:
+        return "P2"
+    if residue_from_end == 0:
+        return "PO"
+    if residue_from_end == -1:
+        return "PO-1"
+    return "orta"
+
+
+def group_of(complex_name, groups):
+    """Kompleksin grup etiketi; hicbir onege uymuyorsa None."""
+    for prefix, label in groups:
+        if complex_name.startswith(prefix):
+            return label
+    return None
+
+
+def profile_complex_means(g, conv=1.0):
+    """(kutu, grup, kompleks) basina tek deger -- replikalar ORTALANIR.
+
+    Sart: aksi halde ayni kompleksin uc replikasi uc BAGIMSIZ gozlem
+    sayilir, orneklem yapay olarak ucer katina cikar ve p degeri
+    oldugundan kucuk cikar. Replikalar ayni sistemin tekrarlaridir,
+    bagimsiz ornekler degil."""
+    return (g.groupby(["kutu", "grup", "complex"])["value"]
+            .mean().mul(conv).reset_index())
+
+
+def plot_profile_compare(pr, out_dir, groups=()):
+    """Profil ciktilarini KONUMA gore gruplar arasi karsilastirir.
+
+    Her `profile` ciktisi icin bir figur: konum kutulari x ekseninde, her
+    kutuda grup basina bir boxplot, ustunde testin p degeri.
+
+    Gruplama `config.sh`'deki COMPLEX_GROUPS'tan gelir; projeye ozel bilgi
+    (hangi onek hangi etiket) koda GIRMEZ. Grup tanimli degilse ya da
+    veride tek grup varsa mod sessizce gecilir -- karsilastirilacak sey
+    yoksa uydurma p uretmek yanlis olur.
+
+    DIKKAT: `rmsf_mhc` gibi uzun profillerde "orta" kutusu yuzlerce residue
+    icerir; figur teknik olarak dogru ama az bilgilendiricidir. Sihirli bir
+    uzunluk esigiyle gizlenmiyor: sessizce kaybolan cikti, zayif ciktidan
+    kotudur.
+    """
+    if pr is None or len(pr) == 0 or not groups:
+        return
+    if "residue_from_end" not in pr.columns:
+        # Bu kolon sonradan eklendi. Eski bir profile_long.csv ile cizim
+        # yapiliyorsa mod atlanir -- ama SESSIZCE degil: kullanici neden
+        # figur uretilmedigini bilmeli ve cozumu tek komut.
+        print("uyari: profile_long.csv'de 'residue_from_end' kolonu yok "
+              "(eski sema); --profile-compare atlandi. "
+              "collect_results.py'yi yeniden calistirin.", file=sys.stderr)
+        return
+    df = pr.copy()
+    df["grup"] = df["complex"].map(lambda c: group_of(c, groups))
+    df = df[df["grup"].notna()]
+    if df.empty or df["grup"].nunique() < 2:
+        return
+    df["kutu"] = [position_bin(r, e) for r, e
+                  in zip(df["residue"], df["residue_from_end"])]
+
+    target = out_dir / "profile_compare"
+    target.mkdir(parents=True, exist_ok=True)
+    etiketler = [lbl for _p, lbl in groups]
+
+    for output, g in df.groupby("output", sort=True):
+        fig = None
+        try:
+            unit = g["unit"].iloc[0]
+            conv, ylabel = scale_and_label(unit)
+            if unit != "nm":
+                _warn_unknown_unit(output, unit)
+            per_cx = profile_complex_means(g, conv)
+            mevcut = [k for k in POSITION_BINS
+                      if k in set(per_cx["kutu"])]
+            gruplar = [lbl for lbl in etiketler
+                       if lbl in set(per_cx["grup"])]
+            n = len(gruplar)
+            w = 0.8 / n
+
+            fig, ax = plt.subplots(figsize=(max(7.0, 1.9 * len(mevcut)), 4.8))
+            ust = per_cx["value"].max()
+            for i, kutu in enumerate(mevcut):
+                orn = []
+                for j, lbl in enumerate(gruplar):
+                    v = per_cx[(per_cx.kutu == kutu)
+                               & (per_cx.grup == lbl)]["value"].to_numpy()
+                    orn.append(v)
+                    if v.size == 0:
+                        continue
+                    bp = ax.boxplot(
+                        [v], positions=[i + (j - (n - 1) / 2) * w],
+                        widths=w * 0.85, patch_artist=True,
+                        medianprops=dict(color="black", lw=1.3),
+                        flierprops=dict(ms=3, mfc="0.5", mec="0.5"))
+                    bp["boxes"][0].set_facecolor(
+                        GROUP_PALETTE[j % len(GROUP_PALETTE)])
+                    bp["boxes"][0].set_alpha(0.75)
+                gecerli = [v for v in orn if v.size > 0]
+                if len(gecerli) < 2:
+                    continue
+                if len(gecerli) == 2:
+                    p = stats.mannwhitneyu(*gecerli,
+                                           alternative="two-sided").pvalue
+                else:
+                    p = stats.kruskal(*gecerli).pvalue
+                ax.text(i, ust * 1.08, f"p={p:.3f}", ha="center", fontsize=9,
+                        color="black" if p < 0.05 else "0.45",
+                        fontweight="bold" if p < 0.05 else "normal")
+
+            ax.set_xticks(range(len(mevcut)))
+            ax.set_xticklabels(mevcut)
+            ax.set_xlabel("Konum (peptid ucundan sayilarak)")
+            ax.set_ylabel(ylabel)
+            ax.set_ylim(top=ust * 1.16)
+            ax.spines[["top", "right"]].set_visible(False)
+            test_adi = "Mann-Whitney" if n == 2 else "Kruskal-Wallis"
+            # Coklu test uyarisi BASLIKTA: figuru tek basina goren biri
+            # p<0.05'i anlamli sanmasin.
+            ax.set_title(
+                f"{Path(output).stem} \u2014 konuma gore gruplar\n"
+                f"{test_adi}; {len(mevcut)} konum test edildi, "
+                f"Bonferroni esigi 0.05/{len(mevcut)} = "
+                f"{0.05 / len(mevcut):.3f}", fontsize=10)
+            ax.legend(handles=[
+                mpatches.Patch(fc=GROUP_PALETTE[j % len(GROUP_PALETTE)],
+                               alpha=0.75, label=lbl)
+                for j, lbl in enumerate(gruplar)],
+                frameon=False, fontsize=9)
+            fig.tight_layout()
+            fig.savefig(target / f"{Path(output).stem}.png", dpi=150)
+        except Exception as exc:
+            print(f"profil karsilastirma cizimi basarisiz ({output}): {exc}",
+                  file=sys.stderr)
+        finally:
+            if fig is not None:
+                plt.close(fig)
+
+
 def plot_matrix(results_dir, out_dir, smooth_ns=DEFAULT_MATRIX_SMOOTH_NS):
     """--matrix modu: kompleks basina isi haritasi izgarasi + denge egrisi."""
     groups = load_matrices(results_dir)
@@ -605,6 +761,7 @@ def main():
     ap.add_argument("--mean-sd", action="store_true")
     ap.add_argument("--compare", action="store_true")
     ap.add_argument("--matrix", action="store_true")
+    ap.add_argument("--profile-compare", action="store_true")
     ap.add_argument("--matrix-smooth-ns", type=float,
                     default=DEFAULT_MATRIX_SMOOTH_NS,
                     help="denge egrisinin yuvarlanan ortalama penceresi, ns "
@@ -613,8 +770,9 @@ def main():
     args = ap.parse_args()
 
     run_all = not (args.per_complex or args.mean_sd or args.compare
-                   or args.matrix)
-    needs_csv = args.per_complex or args.mean_sd or args.compare or run_all
+                   or args.matrix or args.profile_compare)
+    needs_csv = (args.per_complex or args.mean_sd or args.compare
+                 or args.profile_compare or run_all)
     ts, pr = load(args.results_dir, required=needs_csv)
     groups = read_complex_groups(args.config)
     out_dir = args.results_dir / "plots"
@@ -626,6 +784,8 @@ def main():
         plot_mean_sd(ts, pr, out_dir, groups)
     if args.compare or run_all:
         plot_compare(ts, out_dir, args.compare_output, groups)
+    if args.profile_compare or run_all:
+        plot_profile_compare(pr, out_dir, groups)
     if args.matrix or run_all:
         plot_matrix(args.results_dir, out_dir, args.matrix_smooth_ns)
 
