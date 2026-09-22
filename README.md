@@ -182,6 +182,13 @@ zincir harflerini hic gormez.
 ./run_analysis.sh --all -a cross_rmsd /veri/kok
 CROSS_RMSD_DT=500 ./run_analysis.sh --all -a cross_rmsd /veri/kok
 
+# Acik yuzey (SASA) -- pahali, seyreltme varsayilani 100 ps
+./run_analysis.sh --all -a sasa /veri/kok
+SASA_DT=200 ./run_analysis.sh --all -a sasa /veri/kok
+
+# Peptid-MHC hidrojen baglari
+./run_analysis.sh --all -a hbond /veri/kok
+
 # Sonuclari topla, sonra cizdir
 python collect_results.py
 python plot_results.py --results-dir /veri/kok/results
@@ -342,6 +349,92 @@ bir veri setinde uydurma bir `top*/last*` efsanesi cikmasin diye.
 Cizim dongusu de yalitimlidir: tek bir (kompleks, cikti) ciftinin hatasi
 stderr'e adiyla yazilir ve digerleri cizilmeye devam eder. Gozetimsiz bir
 kosuda tek bozuk kompleks yuzunden butun grafikleri kaybetmezsiniz.
+
+---
+
+## Iki gmx tuzagi: `hbond` ve `sasa`
+
+Ikisi de olcumle saptandi ve eklentilerin icinde yorum olarak yazili.
+
+### `gmx hbond` referans PDB ile SESSIZCE sifir dondurur
+
+Ayni komut, yalnizca `-s` degisiyor:
+
+| `-s` | sonuc |
+|---|---|
+| `check_ref.pdb` | ortalama **0.00** H-bagi |
+| `md_0_10.tpr` | ortalama **10.96** H-bagi |
+
+PDB'de bag bilgisi yoktur, bu yuzden donor/akseptor cikarilamaz -- ve arac
+**hata vermez**. Yani yanlis dosyayi vermek sessiz veri kaybidir. `hbond.sh`
+bu yuzden `$REF_PDB` degil `"$rep_dir/$TPR_NAME"` kullanir, ve
+`tests/test_hbond.py` hem kaynagi hem gercek kosuyu denetler.
+
+Topoloji eklentiye degisken olarak verilmez ama `$TPR_NAME` ve `$rep_dir`
+gorunurdur (`mdkit_run_isolated` alt kabukta kosturur) -- `cross_rmsd`'nin
+kardes replikalara eristigi mekanizmanin aynisi. `run_analysis.sh` degismedi.
+
+Hedef grup `RECEPTOR`'dur, `AUX` (b2m) degil: **bes farkli komplekste de**
+b2m'nin peptide H-bagi katkisi tam sifir olctuldu (b2m olugun karsi
+tarafindadir). `RECEPTOR` ile `RECEPTOR`+`AUX` ayni sonucu verir.
+
+### `gmx hbond -o` verilmezse CALISMA DIZININE yazar -- ve 99'da durur
+
+`gmx hbond`'un `-num` disinda bir de `-o` (H-bagi index dosyasi) ciktisi
+vardir. Verilmezse `hbond.ndx`'i **calisma dizinine** yazar, yani
+`run_analysis.sh`'in cagrildigi yere. Dahasi GROMACS her kosuda eskisini
+`#hbond.ndx.N#` olarak yedekler ve **99. yedekte durur**:
+
+    Will not make more than 99 backups
+
+105 replikalik gercek bir kosuda bu yasandi: ilk 84 replika calisti, **son
+21'i HATA verdi** ve depo 98 adet yedek dosyayla doldu. Ayni tuzak spec'te
+`gmx rms -o` icin zaten belgelenmisti; `hbond.sh`'e uygulanmasi atlanmisti.
+
+Cozum `cross_rmsd`'nin kullandigi kalibin aynisi: `-o` bir `mktemp -d`
+dizinine yonlendirilir ve `analysis_run` cikista siler. `out_dir`'e yazmak
+da olmaz -- manifestoda ilan edilmeyen bir `.ndx` her toplamada uyari
+uretirdi.
+
+Iki test birden baglar: kaynakta `-o` ve `mktemp` aranir, ve kosu **bos bir
+dizinde** calistirilip dizinin bos kaldigi dogrulanir. `.gitignore`'daki
+`#*#` satiri yalnizca ikinci savunma hattidir.
+
+### `gmx sasa -or` `profile` kind'i ile UYUMSUZ
+
+`-or` (residue basina alan), yuzey secimi ile `-output` secimini **ayni
+dosyada arka arkaya** yazar ve residue numaralari zincir basina sifirlanir.
+Olculen ornek: **386 satir, 100 TEKRARLI residue numarasi**, en buyuk numara
+276, son satir residue 10.
+
+`collect_results.py`'nin `profile` kind'i residue'yu benzersiz varsayar; bu
+dosya onu **sessizce** bozardi. Bu yuzden `sasa.sh` yalnizca `-o` (zaman
+serisi) uretir; residue bazli SASA icin blok-farkinda bir ayristirici gerekir
+ve bu henuz yazilmadi.
+
+### `sasa` pahalidir, seyreltme varsayilan olarak aciktir
+
+Olculdu (9001 frame, tek replika):
+
+| ayar | sure | peptid SASA ortalamasi |
+|---|---|---|
+| tam (10 ps) | 190 s | 5.5857 nm² |
+| `-dt 100` (varsayilan) | **19.7 s** | 5.5841 nm² |
+| `-dt 200` | 10.3 s | 5.5737 nm² |
+
+105 replika x 2 kosu: tam cozunurlukte ~11 saat, `-dt 100` ile ~70 dakika.
+Ortalamaya etkisi %0.03. `SASA_DT` ile ezilir.
+
+`hbond` seyreltilmez: tam trajektoride replika basina ~2 saniye surdugu icin
+kazanci yok.
+
+### Gomulu yuzey saklanmaz, turetilir
+
+`sasa` iki cikti verir: peptidin **kompleks icindeki** acik yuzeyi
+(`sasa_pep_in_complex.xvg`, `-surface Protein -output LIGAND`) ve **tek
+basina** acik yuzeyi (`sasa_pep_alone.xvg`, `-surface LIGAND`). Gomulu yuzey
+bu ikisinin farkidir ve ucuncu bir dosya olarak yazilmaz -- saklanan iki
+buyuklugun farkini dosyaya dokmek veriyi cogaltmak olurdu.
 
 ---
 
