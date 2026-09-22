@@ -3,6 +3,7 @@ import subprocess
 import sys
 import textwrap
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
@@ -217,3 +218,89 @@ def test_manifestte_olmayan_xvg_tek_satirlik_uyari_uretir(
 
     ts = list(csv.DictReader((tmp_path / "results" / "timeseries_long.csv").read_text().splitlines()))
     assert {row["output"] for row in ts} == {"rmsd_pep_on_mhc.xvg"}
+
+
+MATRIX_XPM = textwrap.dedent("""\
+    /* XPM */
+    /* legend:  "RMSD (nm)" */
+    static char *gromacs_xpm[] = {
+    "3 3   3 1",
+    "A  c #FFFFFF " /* "0" */,
+    "B  c #808080 " /* "0.5" */,
+    "C  c #000000 " /* "1" */,
+    /* x-axis:  0 100 200 */
+    /* y-axis:  0 100 200 */
+    "CBA",
+    "BAB",
+    "ABC"
+    """)
+
+
+def test_peer_replica_bilinen_adlarla_eslesir():
+    reps = ["rep1", "rep2", "rep3"]
+    assert collect_results.peer_replica("cross_rmsd_rep2.xpm", reps) == "rep2"
+    assert collect_results.peer_replica("dssp.xpm", reps) is None
+
+
+def test_matris_npz_olarak_yazilir(fake_dataset, fake_config, tmp_path):
+    write_outputs(fake_dataset, {"cross_rmsd_rep2.xpm": MATRIX_XPM})
+    manifest = {"cross_rmsd_rep2.xpm": ("cross_rmsd", "matrix")}
+    mdir = tmp_path / "matrices"
+    ts, pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=mdir,
+    )
+    assert ts == [] and pr == []
+    # 2 kompleks x 3 replika
+    assert len(mx) == 6
+    f = mdir / "last1_rep1_cross_rmsd_rep2.npz"
+    assert f.exists(), sorted(p.name for p in mdir.glob("*"))
+    d = np.load(f, allow_pickle=False)
+    assert d["values"].shape == (3, 3)
+    assert np.allclose(np.diag(d["values"]), 0.0)
+    assert np.allclose(d["x_ps"], [0.0, 100.0, 200.0])
+    assert str(d["unit"]) == "nm"
+    assert str(d["replica_i"]) == "rep1"
+    assert str(d["replica_j"]) == "rep2"
+
+
+def test_matris_kind_artik_uyari_uretmiyor(fake_dataset, capsys, tmp_path):
+    """Once .xpm hic gorulmuyordu (*.xvg glob'u); simdi toplaniyor."""
+    write_outputs(fake_dataset, {"cross_rmsd_rep1.xpm": MATRIX_XPM})
+    manifest = {"cross_rmsd_rep1.xpm": ("cross_rmsd", "matrix")}
+    collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=tmp_path / "m",
+    )
+    err = capsys.readouterr().err
+    assert "taninmayan ANALYSIS_KIND" not in err
+
+
+def test_manifestoda_olmayan_xpm_uyarir(fake_dataset, capsys, tmp_path):
+    write_outputs(fake_dataset, {"baskabir.xpm": MATRIX_XPM})
+    collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], {},
+        matrix_dir=tmp_path / "m",
+    )
+    err = capsys.readouterr().err
+    assert "baskabir.xpm" in err
+
+
+def test_bozuk_xpm_kosuyu_durdurmaz(fake_dataset, capsys, tmp_path):
+    write_outputs(fake_dataset, {"cross_rmsd_rep1.xpm": "bozuk icerik\n"})
+    manifest = {"cross_rmsd_rep1.xpm": ("cross_rmsd", "matrix")}
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest,
+        matrix_dir=tmp_path / "m",
+    )
+    assert mx == []
+    assert "cross_rmsd_rep1.xpm" in capsys.readouterr().err
+
+
+def test_matrix_dir_yoksa_matris_atlanir(fake_dataset, tmp_path):
+    """collect(), matrix_dir verilmediginde .xpm'leri hic islemez."""
+    write_outputs(fake_dataset, {"cross_rmsd_rep1.xpm": MATRIX_XPM})
+    manifest = {"cross_rmsd_rep1.xpm": ("cross_rmsd", "matrix")}
+    _ts, _pr, mx = collect_results.collect(
+        fake_dataset, "*_pandora", ["rep1", "rep2", "rep3"], manifest)
+    assert mx == []

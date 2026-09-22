@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-"""mdkit: rep*/analysis/*.xvg -> results/{timeseries,profile}_long.csv
+"""mdkit: rep*/analysis/*.{xvg,xpm} -> results/ CSV'leri + matrisler
+
+    *.xvg -> results/{timeseries,profile}_long.csv
+    *.xpm -> results/matrices/*.npz + results/matrix_summary.csv
 
 Analiz manifestosu `run_analysis.sh --list` ciktisindan okunur; boylece hangi
 ciktinin hangi analize ve hangi KIND'a ait oldugu tek kaynakta (analysis/*.sh)
@@ -34,6 +37,8 @@ TS_FIELDS = ["complex", "replica", "analysis", "output", "series",
              "time_ps", "value", "unit"]
 PR_FIELDS = ["complex", "replica", "analysis", "output", "series",
              "residue", "value", "unit"]
+MX_FIELDS = ["complex", "replica_i", "replica_j", "analysis", "output",
+             "n_x", "n_y", "min", "mean", "max", "unit"]
 
 
 def parse_xvg(path):
@@ -192,8 +197,22 @@ def read_manifest(config):
     return manifest
 
 
-def collect(data_root, complex_glob, reps, manifest):
-    timeseries, profile = [], []
+def peer_replica(output_name, reps):
+    """'cross_rmsd_rep2.xpm' -> 'rep2'; eslesme yoksa None.
+
+    Dosya adi kalibini burada yeniden tanimlamiyoruz: config'den gelen
+    BILINEN replika adlariyla eslestiriyoruz. Boylece `matrix` destegi
+    replikalar-arasi analizlere kilitlenmez -- eslesmeyen bir matris
+    (or. residue x zaman) da toplanir, yalnizca replica_j'si bos olur."""
+    stem = Path(output_name).stem
+    for rep in reps:
+        if stem.endswith("_" + rep):
+            return rep
+    return None
+
+
+def collect(data_root, complex_glob, reps, manifest, matrix_dir=None):
+    timeseries, profile, matrices = [], [], []
     warned = set()
     warned_unlisted = set()
     for cx in sorted(data_root.glob(complex_glob)):
@@ -204,6 +223,41 @@ def collect(data_root, complex_glob, reps, manifest):
             adir = cx / rep / "analysis"
             if not adir.is_dir():
                 continue
+
+            if matrix_dir is not None:
+                for xpm in sorted(adir.glob("*.xpm")):
+                    entry = manifest.get(xpm.name)
+                    if entry is None:
+                        if xpm.name not in warned_unlisted:
+                            warned_unlisted.add(xpm.name)
+                            print(
+                                f"mdkit: manifestoda olmayan .xpm atlandi: "
+                                f"{xpm.name} (ilk gorulen: {adir})",
+                                file=sys.stderr,
+                            )
+                        continue
+                    analysis, kind = entry
+                    if kind != "matrix":
+                        key = (xpm.name, kind)
+                        if key not in warned:
+                            warned.add(key)
+                            print(
+                                f"mdkit: .xpm ciktisi {kind!r} kind'i ile ilan "
+                                f"edilmis ({xpm.name}) -- toplanmadan atlandi",
+                                file=sys.stderr,
+                            )
+                        continue
+                    # Tek bir bozuk matris 105 dizinlik toplamayi dusurmemeli
+                    # (bash tarafindaki hata yalitimiyla ayni gerekce).
+                    try:
+                        rec = collect_matrix(
+                            xpm, cname, rep, reps, analysis, matrix_dir)
+                    except Exception as exc:
+                        print(f"mdkit: {xpm.name} okunamadi ({adir}): {exc}",
+                              file=sys.stderr)
+                        continue
+                    matrices.append(rec)
+
             for xvg in sorted(adir.glob("*.xvg")):
                 entry = manifest.get(xvg.name)
                 if entry is None:
@@ -250,7 +304,30 @@ def collect(data_root, complex_glob, reps, manifest):
                         elif kind == "profile":
                             rec["residue"] = int(x)
                             profile.append(rec)
-    return timeseries, profile
+    return timeseries, profile, matrices
+
+
+def collect_matrix(xpm, cname, rep, reps, analysis, matrix_dir):
+    """Bir .xpm'i .npz olarak yazar ve ozet kaydini dondurur.
+
+    Matrisler uzun-format CSV'ye GIRMEZ: 451x451'lik 315 matris ~64 milyon
+    satir ederdi. 1D veri icin dogru olan bicim 2B icin degil."""
+    meta, values, x_ps, y_ps = parse_xpm(xpm)
+    peer = peer_replica(xpm.name, reps)
+    matrix_dir.mkdir(parents=True, exist_ok=True)
+    out = matrix_dir / f"{cname}_{rep}_{xpm.stem}.npz"
+    np.savez_compressed(
+        out,
+        values=values, x_ps=x_ps, y_ps=y_ps,
+        unit=meta["unit"], complex=cname, replica_i=rep,
+        replica_j=peer or "", analysis=analysis, output=xpm.name,
+    )
+    return {
+        "complex": cname, "replica_i": rep, "replica_j": peer or "",
+        "analysis": analysis, "output": xpm.name,
+        "n_x": int(values.shape[1]), "n_y": int(values.shape[0]),
+        "unit": meta["unit"],
+    }
 
 
 def write_csv(path, fields, rows):
@@ -262,7 +339,7 @@ def write_csv(path, fields, rows):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="mdkit .xvg toplayici")
+    ap = argparse.ArgumentParser(description="mdkit .xvg/.xpm toplayici")
     ap.add_argument("-c", "--config", type=Path, default=None,
                     help="config.sh (varsayilan: mdkit/config.sh)")
     ap.add_argument("-o", "--out-dir", type=Path, default=None,
@@ -273,12 +350,15 @@ def main():
     out_dir = args.out_dir or results_dir
     manifest = read_manifest(args.config)
 
-    timeseries, profile = collect(data_root, complex_glob, reps, manifest)
+    matrix_dir = out_dir / "matrices"
+    timeseries, profile, matrices = collect(
+        data_root, complex_glob, reps, manifest, matrix_dir=matrix_dir)
     write_csv(out_dir / "timeseries_long.csv", TS_FIELDS, timeseries)
     write_csv(out_dir / "profile_long.csv", PR_FIELDS, profile)
 
     print(f"timeseries: {len(timeseries)} satir -> {out_dir / 'timeseries_long.csv'}")
     print(f"profile   : {len(profile)} satir -> {out_dir / 'profile_long.csv'}")
+    print(f"matris    : {len(matrices)} dosya -> {matrix_dir}")
 
 
 if __name__ == "__main__":
