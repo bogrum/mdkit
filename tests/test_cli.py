@@ -10,6 +10,15 @@ def run_cli(mdkit, *args, **kw):
     )
 
 
+def n_analyses(mdkit, config):
+    """--list'teki analiz sayisi. Sabit kodlanmaz: analysis/ altina bir
+    eklenti eklemek dry-run SAYIM testlerini dusurmemeli -- bu testler
+    kompleks x replika yayilimini olcuyor, eklenti sayisini degil."""
+    r = run_cli(mdkit, "-c", str(config), "--list")
+    assert r.returncode == 0, r.stderr
+    return len([ln for ln in r.stdout.splitlines() if ln.strip()])
+
+
 def test_help_sifirla_doner(mdkit):
     r = run_cli(mdkit, "--help")
     assert r.returncode == 0
@@ -76,7 +85,8 @@ def test_dry_run_hicbir_sey_yazmaz(mdkit, fake_config, fake_dataset, tmp_path):
         mdkit, "--config", str(fake_config), "--dry-run", "--all", str(fake_dataset)
     )
     assert r.returncode == 0, r.stderr
-    assert r.stdout.count("DRY-RUN") == 2 * 3 * 2   # 2 kompleks x 3 replika x 2 analiz
+    # 2 kompleks x 3 replika x analiz sayisi
+    assert r.stdout.count("DRY-RUN") == 2 * 3 * n_analyses(mdkit, fake_config)
     assert "last1/rep1/rmsd" in r.stdout
     assert not (tmp_path / "results" / "run_log.csv").exists()
     assert not (fake_dataset / "last1_AAA_A0201_pandora" / "rep1" / "analysis").exists()
@@ -87,7 +97,7 @@ def test_dry_run_tek_kompleks(mdkit, fake_config, fake_dataset):
         mdkit, "--config", str(fake_config), "--dry-run",
         str(fake_dataset / "top1_BBB_A0201_pandora"),
     )
-    assert r.stdout.count("DRY-RUN") == 3 * 2
+    assert r.stdout.count("DRY-RUN") == 3 * n_analyses(mdkit, fake_config)
     assert "last1" not in r.stdout
 
 
@@ -96,7 +106,7 @@ def test_reps_secenegi_daraltir(mdkit, fake_config, fake_dataset):
         mdkit, "--config", str(fake_config), "--dry-run", "-r", "rep1",
         str(fake_dataset / "top1_BBB_A0201_pandora"),
     )
-    assert r.stdout.count("DRY-RUN") == 2
+    assert r.stdout.count("DRY-RUN") == n_analyses(mdkit, fake_config)
     assert "rep2" not in r.stdout
 
 
