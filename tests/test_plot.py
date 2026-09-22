@@ -584,3 +584,69 @@ def test_equilibrium_window_sifir_kapatir(tmp_path):
 
 def test_equilibrium_window_tek_frame(tmp_path):
     assert plot_results.equilibrium_window(np.array([0.0]), 1.0) == 0
+
+
+def test_global_spans_tum_kompleksleri_kapsar(tmp_path):
+    """Ortak skala TUM komplekslerin araligini kapsamali; yoksa bir
+    kompleksin degerleri colorbar'in disina tasar."""
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "dar", "rep1", "rep1", [[0.0, 0.4], [0.4, 0.0]])
+    _write_matrix_npz(mdir, "genis", "rep1", "rep1", [[0.0, 1.5], [1.5, 0.0]])
+    spans = plot_results.global_spans(plot_results.load_matrices(tmp_path))
+    assert set(spans) == {("cross_rmsd", "nm")}
+    lo, hi = spans[("cross_rmsd", "nm")]
+    assert lo == pytest.approx(0.0)
+    assert hi == pytest.approx(15.0)      # 1.5 nm -> 15 A
+
+
+def test_global_spans_birimleri_karistirmaz(tmp_path):
+    """nm ile nm^2 ayni skalaya konamaz; birim anahtarin parcasi."""
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "a", "rep1", "rep1", [[0.0, 0.4], [0.4, 0.0]])
+    _write_matrix_npz(mdir, "b", "rep1", "rep1", [[0.0, 9.0], [9.0, 0.0]],
+                      unit="nm^2")
+    spans = plot_results.global_spans(plot_results.load_matrices(tmp_path))
+    assert set(spans) == {("cross_rmsd", "nm"), ("cross_rmsd", "nm^2")}
+
+
+def test_ortak_skalali_ikinci_set_uretilir(tmp_path):
+    mdir = tmp_path / "matrices"
+    for cx, v in [("dar", 0.4), ("genis", 1.5)]:
+        for i in ["rep1", "rep2"]:
+            for j in ["rep1", "rep2"]:
+                _write_matrix_npz(mdir, cx, i, j, [[0.0, v], [v, 0.0]])
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    for cx in ["dar", "genis"]:
+        assert (out / "matrix" / f"{cx}_cross_rmsd.png").exists()
+        assert (out / "matrix_global" / f"{cx}_cross_rmsd.png").exists()
+
+
+def test_tek_kompleksten_ortak_skala_uretilmez(tmp_path):
+    """Tek kompleks varsa ortak skala kendi skalasiyla AYNIDIR; ayni figuru
+    iki kez yazmanin anlami yok."""
+    mdir = tmp_path / "matrices"
+    _write_matrix_npz(mdir, "tek", "rep1", "rep1", [[0.0, 0.5], [0.5, 0.0]])
+    out = tmp_path / "plots"
+    plot_results.plot_matrix(tmp_path, out)
+    assert (out / "matrix" / "tek_cross_rmsd.png").exists()
+    assert not (out / "matrix_global").exists()
+
+
+def test_renk_araligi_her_iki_sette_de_baslikta(tmp_path, monkeypatch):
+    """Kompleks basina skalada da aralik yazmali: yazmazsa okuyucu
+    renkleri kompleksler arasi kiyaslamaya kalkar ve yanilir."""
+    seen = []
+    orig = plot_results.plt.Figure.suptitle
+
+    def spy(self, t, *a, **k):
+        seen.append(t)
+        return orig(self, t, *a, **k)
+
+    monkeypatch.setattr(plot_results.plt.Figure, "suptitle", spy)
+    mdir = tmp_path / "matrices"
+    for cx, v in [("dar", 0.4), ("genis", 1.5)]:
+        _write_matrix_npz(mdir, cx, "rep1", "rep1", [[0.0, v], [v, 0.0]])
+    plot_results.plot_matrix(tmp_path, tmp_path / "plots")
+    assert any("[renk skalasi:" in s for s in seen), seen
+    assert any("[ortak renk skalasi:" in s for s in seen), seen

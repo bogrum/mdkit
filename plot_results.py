@@ -424,7 +424,26 @@ def rolling_mean(y, window):
     return (window - 1) // 2, vals
 
 
-def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
+def global_spans(groups):
+    """(analiz, birim) -> (vmin, vmax), TUM kompleksler uzerinden.
+
+    Birim anahtarin PARCASI: nm ile nm^2 matrisleri ayni renk skalasina
+    konamaz, cevrim carpanlari farklidir."""
+    spans = {}
+    for (_cx, analysis), recs in groups.items():
+        unit = recs[0]["unit"]
+        conv, _ulabel = scale_and_label(unit)
+        lo = min(float(r["values"].min()) for r in recs) * conv
+        hi = max(float(r["values"].max()) for r in recs) * conv
+        key = (analysis, unit)
+        if key in spans:
+            spans[key] = (min(spans[key][0], lo), max(spans[key][1], hi))
+        else:
+            spans[key] = (lo, hi)
+    return spans
+
+
+def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel, vlim=None):
     """Kompleks basina N x N isi haritasi izgarasi, ORTAK renk skalasiyla.
 
     Ortak skala sart: panel basina ayri skala, farkli replika ciftlerini
@@ -434,8 +453,11 @@ def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
     cols = sorted({r["replica_i"] for r in recs})
     by_cell = {(r["replica_i"], r["replica_j"]): r for r in recs}
 
-    vmin = min(float(r["values"].min()) for r in recs) * conv
-    vmax = max(float(r["values"].max()) for r in recs) * conv
+    if vlim is None:
+        vmin = min(float(r["values"].min()) for r in recs) * conv
+        vmax = max(float(r["values"].max()) for r in recs) * conv
+    else:
+        vmin, vmax = vlim
 
     fig, axes = plt.subplots(
         len(rows), len(cols), squeeze=False,
@@ -468,7 +490,12 @@ def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
         # gmx'in kendi basligi: NEYIN olculdugu. Olmadan okuyucu grafikten
         # hangi buyuklugun cizildigini anlayamaz.
         caption = matrix_caption(recs[0])
-        fig.suptitle(f"{cx} \u2014 {analysis}"
+        # Araligi HER IKI sette de basliga yaz: kompleks basina skalada
+        # "bu yesil kac angstrom?" sorusunun cevabi figurde olmazsa okuyucu
+        # renkleri kompleksler arasi kiyaslamaya kalkar -- ve yanilir.
+        kind = "ortak renk skalasi" if vlim is not None else "renk skalasi"
+        scale_note = f"  [{kind}: {vmin:.1f}-{vmax:.1f} {ulabel}]"
+        fig.suptitle(f"{cx} \u2014 {analysis}{scale_note}"
                      + (f"\n{caption}" if caption else ""))
         fig.savefig(target / f"{cx}_{analysis}.png", dpi=150,
                     bbox_inches="tight")
@@ -524,6 +551,18 @@ def plot_matrix(results_dir, out_dir, smooth_ns=DEFAULT_MATRIX_SMOOTH_NS):
     target = out_dir / "matrix"
     target.mkdir(parents=True, exist_ok=True)
 
+    # Kompleks basina skala, kompleks ICI kontrasti korur ama kompleksler
+    # ARASI renk okumayi imkansiz kilar (olculdu: top1'de "yesil" 2.9 A,
+    # last10'da 8.9 A). Ikisi de gerekli, o yuzden ikinci bir set ortak
+    # skalayla yazilir. Tek kompleksli bir (analiz, birim) grubunda ortak
+    # skala kendi skalasiyla ayni oldugundan yazilmaz.
+    spans = global_spans(groups)
+    per_key = {}
+    for (_cx, analysis), recs in groups.items():
+        per_key[(analysis, recs[0]["unit"])] = \
+            per_key.get((analysis, recs[0]["unit"]), 0) + 1
+    global_target = out_dir / "matrix_global"
+
     for (cx, analysis), recs in sorted(groups.items()):
         # Birim kurali .xvg ile birebir ayni: yalnizca nm cevrilir,
         # taninmayan birim cevrilmeden kendi etiketiyle cizilir.
@@ -539,6 +578,16 @@ def plot_matrix(results_dir, out_dir, smooth_ns=DEFAULT_MATRIX_SMOOTH_NS):
         except Exception as exc:
             print(f"matris cizimi basarisiz ({cx}, {analysis}): {exc}",
                   file=sys.stderr)
+
+        key = (analysis, unit)
+        if per_key.get(key, 0) > 1:
+            try:
+                global_target.mkdir(parents=True, exist_ok=True)
+                _draw_matrix_grid(cx, analysis, recs, global_target, conv,
+                                  ulabel, vlim=spans[key])
+            except Exception as exc:
+                print(f"ortak skalali matris cizimi basarisiz "
+                      f"({cx}, {analysis}): {exc}", file=sys.stderr)
         try:
             _draw_equilibrium(cx, analysis, recs, target, conv, ulabel,
                               smooth_ns)

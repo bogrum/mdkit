@@ -94,8 +94,9 @@ $DATA_ROOT/
     └── plots/
         ├── per_complex/<kompleks>_<cikti>.png
         ├── mean_sd/<kompleks>_<cikti>.png
-        ├── matrix/<kompleks>_<analiz>.png
+        ├── matrix/<kompleks>_<analiz>.png            (kompleks basina skala)
         ├── matrix/<kompleks>_<analiz>_equilibrium.png
+        ├── matrix_global/<kompleks>_<analiz>.png     (ortak skala)
         └── compare_<cikti>.png
 ```
 
@@ -392,6 +393,17 @@ boyle bir sapma icermez -- TAM simetriktir ve kosegeni TAM sifirdir.
 `config.sh`'teki `REPS`'ten turetilir, `-r` ise onu yalnizca kosu icin ezer.
 Sessiz bir yanlislik degil: eksik dosya toplanmaz, sonraki tam kosu eksikligi
 gorup yeniden uretir.
+
+**Renk skalasi IKI sette birden uretilir.** `plots/matrix/` her kompleksi
+KENDI araligiyla cizer (kompleks ICI kontrast korunur); `plots/matrix_global/`
+ayni analizin butun komplekslerini ORTAK bir aralikla cizer (kompleksler ARASI
+kiyas mumkun olur). Ikisi de gerekli, cunku takas gercek: `top2`'nin araligi
+0-4.4 A, `last10`'unki 0-14.9 A; ortak skalada `top2` neredeyse duz cikar ama
+"bu kompleks digerlerine gore dusuk" bir bakista gorunur. Her iki setin de
+BASLIGINDA kullanilan aralik yazar -- yazmasaydi okuyucu renkleri kompleksler
+arasi kiyaslamaya kalkardi ve yanilirdi (olculdu: `top1`'de "yesil" 2.9 A,
+`last10`'da 8.9 A). Tek kompleksli bir (analiz, birim) grubunda ortak skala
+kendi skalasiyla ayni oldugu icin ikinci set yazilmaz.
 
 **Denge egrisinin penceresi SABIT bir suredir** (`--matrix-smooth-ns`,
 varsayilan 1.0 ns; `0` kapatir). Serinin oranina baglanmis bir pencere
