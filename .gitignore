@@ -3,3 +3,7 @@ __pycache__/
 .pytest_cache/
 *.pyc
 results/
+
+# gmx yedek dosyalari (#dosya.N#). Eklentiler -o vererek bunlari onler;
+# bu satir yalnizca ikinci savunma hatti.
+\#*\#
