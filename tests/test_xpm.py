@@ -163,3 +163,20 @@ def test_baslik_yoksa_bos(tmp_path):
     """Baslik zorunlu degil; olmamasi hata degil."""
     meta, _v, _x, _y = collect_results.parse_xpm(_write(tmp_path, CPP2_XPM))
     assert meta["title"] == ""
+
+
+def test_altbaslik_okunur(tmp_path):
+    """Eklenti gmx'in .xvg'sinden okudugu subtitle'i .xpm'e ekler; orada
+    HEM olculen HEM fit grubu vardir. title yalnizca olculeni soyler."""
+    text = SELF_XPM.replace(
+        '/* legend:',
+        '/* subtitle:  "LIGAND_BB after lsq fit to RECEPTOR_BB" */\n/* legend:')
+    meta, _v, _x, _y = collect_results.parse_xpm(_write(tmp_path, text))
+    assert meta["subtitle"] == "LIGAND_BB after lsq fit to RECEPTOR_BB"
+    # 'subtitle' satiri 'title' desenine yanlislikla eslesmemeli
+    assert meta["title"] == "LIGAND_BB RMSD matrix"
+
+
+def test_altbaslik_yoksa_bos(tmp_path):
+    meta, _v, _x, _y = collect_results.parse_xpm(_write(tmp_path, SELF_XPM))
+    assert meta["subtitle"] == ""

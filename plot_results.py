@@ -319,6 +319,8 @@ def load_matrices(results_dir):
                     # Bu alan sonradan eklendi; onceden yazilmis .npz'ler
                     # onu icermez ve yeniden cizim patlamamali.
                     "title": str(d["title"]) if "title" in d.files else "",
+                    "subtitle": (str(d["subtitle"])
+                                 if "subtitle" in d.files else ""),
                 }
         except Exception as exc:
             print(f"matris okunamadi ({f.name}): {exc}", file=sys.stderr)
@@ -357,6 +359,15 @@ def equilibrium_curves(recs):
         stack = np.concatenate([r["values"] for r in rs], axis=0)
         curves[rep_i] = (rs[0]["x_ps"], stack.mean(axis=0))
     return curves
+
+
+def matrix_caption(rec):
+    """Figurde gosterilecek aciklama: NE olculdu, NEYE fit edildi.
+
+    subtitle tercih edilir cunku ikisini birden tasir
+    ("LIGAND_BB after lsq fit to RECEPTOR_BB"); title yalnizca olculeni
+    soyler. Ikisi de yoksa bos -- uydurulmaz."""
+    return rec.get("subtitle") or rec.get("title") or ""
 
 
 def window_label(window, x_ps):
@@ -427,8 +438,9 @@ def _draw_matrix_grid(cx, analysis, recs, target, conv, ulabel):
                          fraction=0.046, pad=0.02)
         # gmx'in kendi basligi: NEYIN olculdugu. Olmadan okuyucu grafikten
         # hangi buyuklugun cizildigini anlayamaz.
-        title = recs[0].get("title", "")
-        fig.suptitle(f"{cx} \u2014 {analysis}" + (f"\n{title}" if title else ""))
+        caption = matrix_caption(recs[0])
+        fig.suptitle(f"{cx} \u2014 {analysis}"
+                     + (f"\n{caption}" if caption else ""))
         fig.savefig(target / f"{cx}_{analysis}.png", dpi=150,
                     bbox_inches="tight")
     finally:
@@ -461,9 +473,9 @@ def _draw_equilibrium(cx, analysis, recs, target, conv, ulabel):
                 ax.plot([], [], color=color, linewidth=2, label=rep_i)
         ax.set_xlabel("Zaman (ns)")
         ax.set_ylabel(f"Ortalama RMSD ({ulabel})")
-        title = recs[0].get("title", "")
+        caption = matrix_caption(recs[0])
         ax.set_title(f"{cx} \u2014 {analysis}: denge analizi"
-                     + (f"\n{title}" if title else "")
+                     + (f"\n{caption}" if caption else "")
                      + "\n(her frame'in tum es frame'lere ortalama uzakligi)")
         ax.legend()
         fig.savefig(target / f"{cx}_{analysis}_equilibrium.png", dpi=150,

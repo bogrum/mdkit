@@ -532,3 +532,20 @@ def test_baslik_olmayan_eski_npz_cokmez(tmp_path):
     out = tmp_path / "plots"
     plot_results.plot_matrix(tmp_path, out)
     assert (out / "matrix" / "last1_cross_rmsd.png").exists()
+
+
+def test_matrix_caption_altbasligi_tercih_eder(tmp_path):
+    """subtitle daha bilgili: hem olculen hem fit grubunu icerir."""
+    rec = {"title": "LIGAND_BB RMSD matrix",
+           "subtitle": "LIGAND_BB after lsq fit to RECEPTOR_BB"}
+    assert plot_results.matrix_caption(rec) == \
+        "LIGAND_BB after lsq fit to RECEPTOR_BB"
+
+
+def test_matrix_caption_altbaslik_yoksa_baslik(tmp_path):
+    rec = {"title": "LIGAND_BB RMSD matrix", "subtitle": ""}
+    assert plot_results.matrix_caption(rec) == "LIGAND_BB RMSD matrix"
+
+
+def test_matrix_caption_ikisi_de_yoksa_bos(tmp_path):
+    assert plot_results.matrix_caption({}) == ""

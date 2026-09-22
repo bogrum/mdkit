@@ -294,3 +294,90 @@ def test_gercek_dat_tam_hassasiyetli(mdkit, real_config):
         f".dat {len(np.unique(v_dat))} farkli deger, "
         f".xpm {len(np.unique(v_xpm))} -- hassasiyet kazanci yok")
     assert np.all(np.diag(v_dat) == 0.0)
+
+
+ANNOTATE = """
+source "{lib}"
+mdkit_load_config "{config}"
+mdkit_clear_plugin
+source "{mdkit}/analysis/cross_rmsd.sh"
+_cross_rmsd_annotate "{xpm}" "{xvg}" "{tmp}"
+"""
+
+
+def _fake_xpm(path):
+    path.write_text('/* XPM */\n'
+                    '/* title:   "LIGAND_BB RMSD matrix" */\n'
+                    'static char *gromacs_xpm[] = {\n'
+                    '"1 1   1 1",\n'
+                    '"A  c #FFFFFF " /* "0" */,\n'
+                    '/* x-axis:  0 */\n'
+                    '/* y-axis:  0 */\n'
+                    '"A"\n')
+    return path
+
+
+def test_annotate_altbasligi_xpme_tasir(mdkit, lib, fake_config, tmp_path):
+    """gmx fit grubunu YALNIZCA .xvg subtitle'ina yazar, .xpm'e yazmaz --
+    ve o .xvg atiliyor. Eklenti satiri tasimazsa figur neye fit edildigini
+    soyleyemez."""
+    xpm = _fake_xpm(tmp_path / "m.xpm")
+    xvg = tmp_path / "m.xvg"
+    xvg.write_text('@    title "RMSD"\n'
+                   '@ subtitle "LIGAND_BB after lsq fit to RECEPTOR_BB"\n'
+                   '@TYPE xy\n')
+    r = run_bash(ANNOTATE.format(lib=lib, config=fake_config, mdkit=mdkit,
+                                 xpm=xpm, xvg=xvg, tmp=tmp_path / "t"))
+    assert r.returncode == 0, r.stderr
+    assert '/* subtitle:  "LIGAND_BB after lsq fit to RECEPTOR_BB" */' \
+        in xpm.read_text()
+    assert not (tmp_path / "t").exists(), "gecici dosya birakilmamali"
+
+
+def test_annotate_altbaslik_yoksa_dosyayi_bozmaz(mdkit, lib, fake_config,
+                                                 tmp_path):
+    xpm = _fake_xpm(tmp_path / "m.xpm")
+    before = xpm.read_text()
+    xvg = tmp_path / "m.xvg"
+    xvg.write_text('@    title "RMSD"\n@TYPE xy\n')
+    r = run_bash(ANNOTATE.format(lib=lib, config=fake_config, mdkit=mdkit,
+                                 xpm=xpm, xvg=xvg, tmp=tmp_path / "t"))
+    assert r.returncode == 0, r.stderr
+    assert xpm.read_text() == before
+
+
+def test_annotate_xvg_yoksa_sessizce_gecer(mdkit, lib, fake_config, tmp_path):
+    xpm = _fake_xpm(tmp_path / "m.xpm")
+    before = xpm.read_text()
+    r = run_bash(ANNOTATE.format(lib=lib, config=fake_config, mdkit=mdkit,
+                                 xpm=xpm, xvg=tmp_path / "yok.xvg",
+                                 tmp=tmp_path / "t"))
+    assert r.returncode == 0, r.stderr
+    assert xpm.read_text() == before
+
+
+@needs_gmx
+def test_gercek_xpm_fit_grubunu_tasiyor(mdkit, real_config):
+    """Uctan uca: gercek gmx ciktisinda .xpm fit grubunu tasiyor mu?"""
+    root = subprocess.run(
+        ["bash", "-c",
+         f'source "{mdkit}/analysis/lib.sh" && '
+         f'mdkit_load_config "{real_config}" && printf "%s" "$DATA_ROOT"'],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    r = subprocess.run(
+        ["bash", str(mdkit / "run_analysis.sh"), "-c", str(real_config),
+         "-a", "cross_rmsd", "-b", "0", "--all", root],
+        capture_output=True, text=True,
+        env={**os.environ, "CROSS_RMSD_DT": "50"},
+    )
+    assert r.returncode == 0, r.stderr
+
+    sys.path.insert(0, str(mdkit))
+    import collect_results
+    xpm = next(Path(root).glob("*/rep1/analysis/cross_rmsd_rep1.xpm"))
+    meta, _v, _x, _y = collect_results.parse_xpm(xpm)
+    assert "fit to" in meta["subtitle"], meta
+    assert "RECEPTOR_BB" in meta["subtitle"]
+    assert "LIGAND_BB" in meta["subtitle"]
+    assert meta["title"] == "LIGAND_BB RMSD matrix"
