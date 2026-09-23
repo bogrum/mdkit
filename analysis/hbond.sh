@@ -44,6 +44,14 @@ _hbond_run() {
         return 1
     }
 
+    # NE HESAPLANIYOR: her frame'de peptid ile MHC arasindaki hidrojen
+    # bagi SAYISI. Geometrik olcut: donor-akseptor mesafesi ve
+    # donor-H-akseptor acisi esikleri (gmx varsayilanlari). -num zaman
+    # serisini yazar; -r referans, -t hedef secimdir.
+    #
+    # Yuksek ve kararli sayi = peptid oluga siki tutunuyor. Dalgalanma =
+    # baglar surekli kopup yeniden kuruluyor.
+    #
     # Hedef RECEPTOR (agir zincir), AUX (b2m) DEGIL.
     # OLCULDU: bes farkli komplekste de b2m'nin peptide H-bagi katkisi TAM
     # SIFIR; beklenen, cunku b2m olugun karsi tarafindadir. RECEPTOR ile

@@ -33,8 +33,15 @@ analysis_run() {
     # profile kind'i residue'yu benzersiz varsayar; bu dosya onu sessizce
     # bozardi. Residue bazli SASA icin blok-farkinda bir ayristirici gerekir.
 
-    # Kompleks ICINDE: yuzey tum proteindir (MHC peptidi orter), rapor edilen
-    # pay LIGAND'inkidir. -o'nun 2. veri kolonu bu paydir.
+    # 1) PEPTIDIN KOMPLEKS ICINDEKI ACIK YUZEYI
+    # Cozucuye acik yuzey, bir prob kuresi (varsayilan 0.14 nm, su
+    # yaricapi) molekulun uzerinde yuvarlanarak hesaplanir; degdigi alan
+    # "acik" sayilir.
+    #
+    # -surface TUM protein verilir, boylece MHC peptidi FIZIKSEL OLARAK
+    # ORTER; -output ile yalnizca LIGAND'in payi raporlanir. Cikti iki
+    # kolonlu: 1) tum kompleksin yuzeyi, 2) bunun icinde peptide dusen pay.
+    # Ikincisi TCR'in gorebilecegi yuzeydir.
     "$GMX" sasa -s "$REF_PDB" -f "$XTC" -n "$NDX" -b "$B_PS" -dt "$dt" \
         -surface 'group "Protein"' -output 'group "LIGAND"' \
         -o "$out_dir/sasa_pep_in_complex.xvg" \
@@ -43,8 +50,11 @@ analysis_run() {
             return 1
         }
 
-    # TEK BASINA: yuzey yalnizca peptid, yani orten hicbir sey yok. Gomulu
-    # yuzeyin referansi budur.
+    # 2) PEPTIDIN TEK BASINA ACIK YUZEYI
+    # -surface yalnizca LIGAND: MHC hesaba hic girmez, yani orten bir sey
+    # yok. Peptidin "tamamen aciktaki" yuzeyi budur ve gomulu yuzeyin
+    # referansidir: gomulu = (2) - (1). Oran olarak okununca "peptidin
+    # yuzde kaci olugun icinde saklaniyor" sorusunu cevaplar.
     "$GMX" sasa -s "$REF_PDB" -f "$XTC" -n "$NDX" -b "$B_PS" -dt "$dt" \
         -surface 'group "LIGAND"' \
         -o "$out_dir/sasa_pep_alone.xvg" \

@@ -105,6 +105,30 @@ def test_scale_and_label_bos_birim_birimsiz_doner():
     assert plot_results.scale_and_label("") == (1.0, "birimsiz")
 
 
+def test_birimsiz_cikti_csvden_okununca_cizilir(mdkit, tmp_path):
+    """gmx hbond'un y ekseni "Hbonds"dur, parantezli birim YOK; collect
+    unit'i bos yazar. pandas bos hucreyi NaN okur ve NaN birim etiketinde
+    re.sub'i patlatiyordu: per-complex/mean-sd sessizce atlaniyor,
+    --compare tum betigi dusuruyordu. Onceki surumde de eksen "nan"
+    yaziyordu."""
+    d = tmp_path / "results"
+    d.mkdir()
+    rows = [f"only1,{rep},hbond,hbond_pep_mhc.xvg,Hydrogen bonds,{t}.0,{v},"
+            for rep, v in [("rep1", 5), ("rep2", 7)] for t in range(0, 30, 10)]
+    (d / "timeseries_long.csv").write_text(TS_HEADER + "\n".join(rows) + "\n")
+
+    ts, _pr = plot_results.load(d)
+    assert ts["unit"].iloc[0] == ""
+
+    r = run_plot(mdkit, d, "--per-complex", "--mean-sd", "--compare",
+                 "--compare-output", "hbond_pep_mhc.xvg")
+    assert r.returncode == 0, r.stderr
+    assert "basarisiz" not in r.stderr
+    for sub in ("per_complex", "mean_sd"):
+        assert (d / "plots" / sub / "only1_hbond_pep_mhc.png").exists()
+    assert (d / "plots" / "compare_hbond_pep_mhc.png").exists()
+
+
 @pytest.fixture
 def results_dir_odd_unit(tmp_path):
     """timeseries'i nm disinda bir birimle (nm^2, sasa benzeri) tasiyan set."""

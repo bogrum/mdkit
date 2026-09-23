@@ -29,10 +29,19 @@ fi
 analysis_run() {
     local rep_dir="$1" out_dir="$2"
 
+    # 1) PEPTIDIN IC ESNEKLIGI
+    # Her residue'nun, kendi ORTALAMA konumundan ne kadar saptigini olcer
+    # (-res: atom degil residue basina). Fit LIGAND'in kendi uzerinde
+    # yapildigi icin peptidin olukta kaymasi/sallanmasi CIKARILIR; geriye
+    # yalnizca peptidin kendi icinde bukulmesi kalir.
     "$GMX" rmsf -s "$REF_PDB" -f "$XTC" -n "$NDX" \
         -o "$out_dir/rmsf_pep_self.xvg" -res -b "$B_PS" <<< 'LIGAND' \
         || { echo "gmx rmsf basarisiz: rmsf_pep_self" >&2; return 1; }
 
+    # 2) MHC'NIN ESNEKLIGI
+    # Ayni olcum, bu kez agir zincir uzerinde. Oluk duvarlarinin ve
+    # ilmeklerin hangi bolgelerinin oynak oldugunu gosterir; peptidinkiyle
+    # karsilastirilinca "hangisi digerine uyum sagliyor" sorusuna bakilir.
     "$GMX" rmsf -s "$REF_PDB" -f "$XTC" -n "$NDX" \
         -o "$out_dir/rmsf_mhc.xvg" -res -b "$B_PS" <<< 'RECEPTOR' \
         || { echo "gmx rmsf basarisiz: rmsf_mhc" >&2; return 1; }
@@ -44,10 +53,20 @@ analysis_run() {
         # (index.ndx'in --force ile yeniden kurulmasiyla simetrik).
         [[ "${FORCE:-0}" == "1" ]] && rm -f "$fitted"
         if [[ ! -s "$fitted" ]]; then
+            # 3a) TRAJEKTORIYI OLUK CERCEVESINE OTURT
+            # Her frame'i RECEPTOR_BB uzerinden dondurup kaydirir
+            # (rot+trans), yani MHC'yi sabitler. Yazilan trajektori TUM
+            # sistemi icerir (System) ama artik oluk cercevesindedir:
+            # peptidin hareketi bundan sonra MHC'ye GORE okunur.
             "$GMX" trjconv -s "$REF_PDB" -f "$XTC" -n "$NDX" \
                 -fit rot+trans -o "$fitted" <<< $'RECEPTOR_BB\nSystem' \
                 || { echo "gmx trjconv -fit basarisiz" >&2; rm -f "$fitted"; return 1; }
         fi
+        # 3b) PEPTIDIN OLUK CERCEVESINDEKI ESNEKLIGI
+        # -nofit SART: trajektori 3a'da zaten fitlendi. Burada tekrar fit
+        # edilseydi peptid yine kendi uzerine oturtulur ve 1)'in aynisi
+        # cikardi. Olculen sey: peptid olugun icinde ne kadar oynuyor --
+        # TCR'in gordugu yuzeyin hareketi budur.
         "$GMX" rmsf -s "$REF_PDB" -f "$fitted" -n "$NDX" \
             -o "$out_dir/rmsf_pep_groovefit.xvg" -res -nofit -b "$B_PS" <<< 'LIGAND' \
             || { echo "gmx rmsf basarisiz: rmsf_pep_groovefit" >&2; return 1; }
