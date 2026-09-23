@@ -107,8 +107,12 @@ def load(results_dir, required=True):
         if required:
             sys.exit(f"sonuc CSV'leri bulunamadi: {results_dir}")
         return pd.DataFrame(), pd.DataFrame()
-    ts = pd.read_csv(ts_path) if ts_path.exists() else pd.DataFrame()
-    pr = pd.read_csv(pr_path) if pr_path.exists() else pd.DataFrame()
+    # unit str okunur: birimsiz ciktilarda (gmx hbond: y ekseni "Hbonds",
+    # parantezli birim yok) collect bos yazar ve pandas bunu NaN yapar --
+    # NaN etiketi re.sub'i patlatiyor, onceki surumde eksene "nan" yaziyordu.
+    kw = dict(converters={"unit": str})
+    ts = pd.read_csv(ts_path, **kw) if ts_path.exists() else pd.DataFrame()
+    pr = pd.read_csv(pr_path, **kw) if pr_path.exists() else pd.DataFrame()
     return ts, pr
 
 
