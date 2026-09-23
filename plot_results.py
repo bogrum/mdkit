@@ -159,6 +159,22 @@ def group_color(complex_name, groups):
     return UNGROUPED_COLOR
 
 
+def series_note(g):
+    """Tek serili ciktilarda seri adi; cok serilide bos.
+
+    gmx rms, NEYIN NEYE FIT edildigini .xvg'nin subtitle'ina yazar
+    ("LIGAND after lsq fit to RECEPTOR_BB") ve collect bunu `series`
+    kolonuna alir. Ama tek seri varken cizgi etiketi replika adidir
+    (`rep1`) ve seri adi DUSERDI -- bilgi veride var, figurde yok.
+    Baslikta bir kez gosterilir.
+
+    Cok serili ciktilarda (or. sasa: Total + LIGAND) legend zaten
+    gosterir, baslikta tekrarlanmaz.
+    """
+    s = g["series"].dropna().unique() if "series" in g else []
+    return str(s[0]) if len(s) == 1 else ""
+
+
 def _panels(ts, pr):
     """(df, x kolonu, x etiketi, x carpani) uclusu uretir."""
     if not ts.empty:
@@ -229,7 +245,9 @@ def plot_per_complex(ts, pr, out_dir, groups=()):
                             linestyle=spec["linestyle"], linewidth=1.0)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
-                ax.set_title(f"{cx} — {Path(output).stem}")
+                not_ = series_note(g)
+                ax.set_title(f"{cx} — {Path(output).stem}"
+                             + (f"\n{not_}" if not_ else ""), fontsize=10.5)
                 ax.legend(frameon=False)
                 ax.spines[["top", "right"]].set_visible(False)
                 fig.tight_layout()
@@ -269,7 +287,11 @@ def plot_mean_sd(ts, pr, out_dir, groups=()):
                             label=series)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
-                ax.set_title(f"{cx} — {Path(output).stem} (n={g['replica'].nunique()} replika)")
+                not_ = series_note(g)
+                ax.set_title(
+                    f"{cx} — {Path(output).stem} "
+                    f"(n={g['replica'].nunique()} replika)"
+                    + (f"\n{not_}" if not_ else ""), fontsize=10.5)
                 if len(bands) > 1:
                     ax.legend(frameon=False)
                 ax.spines[["top", "right"]].set_visible(False)

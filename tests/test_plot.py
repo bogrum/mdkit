@@ -839,3 +839,35 @@ def test_bilinmeyen_birim_yine_cevrilmez(capsys):
     assert lbl == "nm$^{2}$"
     conv, lbl = plot_results.scale_and_label("nm")
     assert (conv, lbl) == (10.0, "Å")
+
+
+def test_series_note_tek_seride_gosterilir():
+    """gmx rms, NEYIN NEYE FIT edildigini .xvg'nin subtitle'ina yazar
+    ("LIGAND after lsq fit to RECEPTOR_BB") ve collect bunu `series`
+    kolonuna alir. Ama tek seri varken cizim katmani etiketi `rep1` yapip
+    seri adini DUSURUYORDU -- yani bilgi veride vardi, figurde yoktu.
+
+    Cok serili ciktilarda (or. sasa: Total + LIGAND) legend zaten
+    gosterdigi icin baslikta tekrarlanmaz."""
+    tek = pd.DataFrame({"series": ["LIGAND after lsq fit to RECEPTOR_BB"] * 4})
+    assert plot_results.series_note(tek) == "LIGAND after lsq fit to RECEPTOR_BB"
+    cok = pd.DataFrame({"series": ["Total", "LIGAND", "Total", "LIGAND"]})
+    assert plot_results.series_note(cok) == ""
+    assert plot_results.series_note(pd.DataFrame({"series": []})) == ""
+
+
+def test_per_complex_basliginda_fit_bilgisi(tmp_path, monkeypatch, results_dir):
+    """RMSD figurunun basligi neyin neye fit edildigini yazmali."""
+    seen = []
+    orig = plot_results.plt.Axes.set_title
+
+    def spy(self, t, *a, **k):
+        seen.append(t)
+        return orig(self, t, *a, **k)
+
+    monkeypatch.setattr(plot_results.plt.Axes, "set_title", spy)
+    ts, pr = plot_results.load(results_dir)
+    plot_results.plot_per_complex(ts, pr, tmp_path)
+    plot_results.plot_mean_sd(ts, pr, tmp_path)
+    fitli = [s for s in seen if "LIGAND" in s]
+    assert fitli, f"hicbir baslikta seri adi yok: {seen[:4]}"
