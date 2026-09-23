@@ -336,13 +336,23 @@ def plot_compare(ts, out_dir, output=DEFAULT_COMPARE_OUTPUT, groups=()):
     data = [per_rep.loc[per_rep["complex"] == c, "value"].to_numpy() for c in order]
 
     fig, ax = plt.subplots(figsize=(max(8.0, len(order) * 0.35), 4.5))
-    bp = ax.boxplot(data, patch_artist=True, widths=0.6)
+    # Aykiri noktalar cizilmez: asagida TUM replikalar zaten nokta olarak
+    # cizilir, fliers ayni replikayi ikinci kez isaretlerdi.
+    bp = ax.boxplot(data, patch_artist=True, widths=0.6, showfliers=False)
     for patch, cx in zip(bp["boxes"], order):
         patch.set_facecolor(group_color(cx, groups))
         patch.set_alpha(0.75)
         patch.set_edgecolor("#333333")
     for median in bp["medians"]:
         median.set_color("#222222")
+    # Replika ortalamalari nokta olarak. n=3'te kutu yalnizca uc noktadir;
+    # noktasiz bir kutuda tek sapan replikanin uzattigi biyik ile gercek
+    # yayilim ayirt edilemez. Yatay kaydirma rastgele DEGIL (deterministik):
+    # ayni veri her kosuda ayni figuru vermeli.
+    for i, vals in enumerate(data, start=1):
+        dx = np.linspace(-0.12, 0.12, len(vals)) if len(vals) > 1 else [0.0]
+        ax.scatter(i + np.asarray(dx), vals, s=14, zorder=3,
+                   facecolor="white", edgecolor="#222222", linewidth=0.8)
 
     ax.set_xticks(range(1, len(order) + 1))
     ax.set_xticklabels(order, rotation=90, fontsize=7)
