@@ -8,6 +8,7 @@ dokunmak gerekmez.
 Birim donusumu burada yapilir: .xvg'ler ps ve nm cinsindendir (spec 2.5).
 """
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -65,13 +66,31 @@ POSITION_BINS = ["P1", "P2", "orta", "PO-1", "PO"]
 DEFAULT_MATRIX_SMOOTH_NS = 1.0
 
 
+def unit_label(unit):
+    """xmgrace bicim kodlarini matplotlib mathtext'e cevirir.
+
+    gmx birimleri xmgrace bicimiyle yazar: `nm\\S2\\N` = nm^2
+    (`\\S` ust simge baslat, `\\s` alt simge, `\\N` normale don). Ham
+    hali eksen etiketinde `nm\\S2\\N` olarak gorunur.
+
+    Bu YALNIZCA GOSTERIM icindir. Birim tanima ve cevrim bundan
+    etkilenmez -- nm^2'yi nm gibi 10 ile carpmak sessizce YANLIS olurdu.
+    """
+    if not unit:
+        return unit
+    s = re.sub(r"\\S(.*?)\\N", r"$^{\1}$", unit)
+    s = re.sub(r"\\s(.*?)\\N", r"$_{\1}$", s)
+    return re.sub(r"\\[A-Za-z]", "", s)
+
+
 def scale_and_label(unit):
     """(carpan, eksen etiketi). Yalnizca nm cevrilir; bilinmeyen birim
     cevrilmeden, kendi etiketiyle cizilir -- bilmedigimiz bir birimi
-    cevirmis gibi yapmiyoruz."""
+    cevirmis gibi yapmiyoruz. Etiket xmgrace bicim kodlarindan arindirilir
+    ama bu KARSILASTIRMAYI etkilemez: unit ham haliyle kiyaslanir."""
     if unit == "nm":
         return NM_TO_ANGSTROM, "Å"
-    return 1.0, unit or "birimsiz"
+    return 1.0, unit_label(unit) or "birimsiz"
 
 
 def _warn_unknown_unit(output, unit):

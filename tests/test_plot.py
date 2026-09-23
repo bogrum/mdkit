@@ -816,3 +816,26 @@ def test_profile_compare_figurde_uzunluk_notu_var(tmp_path, monkeypatch):
     plot_results.plot_profile_compare(_profile_df(), tmp_path,
                                       [("top", "TRUE"), ("last", "FALSE")])
     assert any("profil uzunlugu" in s for s in seen), seen
+
+
+def test_xmgrace_biciminden_arindirilir():
+    """gmx birimleri xmgrace bicim kodlariyla yazar: nm\\S2\\N = nm^2
+    (\\S ust simge baslat, \\N normale don). Ham hali eksen etiketinde
+    'nm\\S2\\N' olarak gorunur ve teze giden figurde cirkin durur.
+
+    DIKKAT: bu yalnizca GOSTERIM. Birim tanima ve cevrim degismez --
+    nm^2'yi nm gibi 10 ile carpmak sessizce YANLIS olurdu."""
+    f = plot_results.unit_label
+    assert f("nm\\S2\\N") == "nm$^{2}$"
+    assert f("nm") == "nm"
+    assert f("kJ/mol") == "kJ/mol"
+    assert f("") == ""
+
+
+def test_bilinmeyen_birim_yine_cevrilmez(capsys):
+    """Bicim temizligi, cevrim REDDINI degistirmemeli."""
+    conv, lbl = plot_results.scale_and_label("nm\\S2\\N")
+    assert conv == 1.0, "nm^2 CEVRILMEMELI"
+    assert lbl == "nm$^{2}$"
+    conv, lbl = plot_results.scale_and_label("nm")
+    assert (conv, lbl) == (10.0, "Å")
