@@ -375,6 +375,23 @@ def test_compare_gruplar_verilince_efsane_config_etiketlerini_kullanir(
     assert [t.get_text() for t in legend.get_texts()] == ["ONDE", "ARKADA"]
 
 
+def test_compare_replika_ortalamalarini_nokta_olarak_cizer(
+    tmp_path, monkeypatch
+):
+    """n=3'te kutu yalnizca uc noktadir; noktalar cizilmezse tek sapan
+    replikanin uzattigi biyik ile gercek yayilim ayirt edilemez. README
+    "kutu icindeki noktalar replikalarin ortalamalari" der."""
+    seen = _capture_axes(monkeypatch)
+    plot_results.plot_compare(_compare_frame(), tmp_path, groups=())
+    pts = np.vstack([c.get_offsets() for c in seen[-1].collections])
+    # siralama medyana gore artan: top1 (x=1) sonra last1 (x=2), 2'ser replika
+    assert len(pts) == 4
+    assert sorted(np.round(pts[:, 0]).tolist()) == [1, 1, 2, 2]
+    by_x = {round(x): y for x, y in pts}
+    assert by_x[1] == pytest.approx(1.0)   # 0.10 nm -> 1.0 A
+    assert by_x[2] == pytest.approx(2.0)
+
+
 def _write_matrix_npz(mdir, cx, rep_i, rep_j, values, unit="nm",
                       analysis="cross_rmsd", title=""):
     mdir.mkdir(parents=True, exist_ok=True)
