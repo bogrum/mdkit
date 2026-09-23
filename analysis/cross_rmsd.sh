@@ -131,14 +131,23 @@ _cross_rmsd_pairs() {
         # -o acikca verilir: gmx rms -o'suz cagrildiginda rmsd.xvg'yi CALISMA
         #   DIZININE yazar. out_dir'e yazmak da olmaz -- manifestoda ilan
         #   edilmeyen bir .xvg her toplamada uyari uretirdi.
+        # NE HESAPLANIYOR: iki trajektorinin HER FRAME CIFTI icin RMSD.
+        # -m matrisi .xpm (renk, eksen zamanlariyla), -bin ayni matrisi ham
+        # float32 olarak yazar. Fit RECEPTOR_BB, olcum LIGAND_BB: yani
+        # "rep_i'nin t aninda oldugu yer ile rep_j'nin t' aninda oldugu yer
+        # arasindaki peptid mesafesi". Koyu bolgeler = ayni konformasyonel
+        # havza; parlak bolgeler = farkli havzalar.
         if [[ "$peer_xtc" == "$XTC" ]]; then
-            # Self-matris: -f2 verilmez. Olculen ve kosegeni sifir dogrulanan
-            # bicim budur.
+            # SELF-MATRIS (rep_i x rep_i): -f2 verilmez, trajektori kendisiyle
+            # karsilastirilir. Kosegen tanim geregi sifirdir; kosegen disi
+            # koyu bloklar tek replika icindeki metastabil durumlari gosterir.
             "$GMX" rms -s "$REF_PDB" -f "$XTC" -n "$NDX" \
                 -m "$out" -bin "$out_bin" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
                 <<< $'RECEPTOR_BB\nLIGAND_BB' \
                 || { echo "gmx rms basarisiz: cross_rmsd_${peer}" >&2; return 1; }
         else
+            # CAPRAZ MATRIS (rep_i x rep_j): -f2 ikinci trajektoriyi verir.
+            # x ekseni -f (kendi), y ekseni -f2 (es).
             "$GMX" rms -s "$REF_PDB" -f "$XTC" -f2 "$peer_xtc" -n "$NDX" \
                 -m "$out" -bin "$out_bin" -o "$tmp_xvg" -b "$B_PS" -dt "$dt" \
                 <<< $'RECEPTOR_BB\nLIGAND_BB' \
